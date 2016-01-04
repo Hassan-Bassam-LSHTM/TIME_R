@@ -1,9 +1,9 @@
 # Time_R, Version 1.0
 # Tom Sumner, 04/01/2016
 
-# Research Version of TIME Impact model
+# Research Version of TIME
 
-# This version replicates the core dynamic transmission model of the TIME Impact module of the Spectrum suite developed by Avenir Health and the London School of Hygiene and Tropical Medicine
+# This version replicates the core dynamic transmission model
  
 # The model is implemented in R, but uses compiled C to code the equations (for computational efficiency)
 # The model can be run in two age structure configurations: single year age bins; 5 year age bins
