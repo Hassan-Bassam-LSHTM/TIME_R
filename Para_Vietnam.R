@@ -24,37 +24,37 @@ rel_d <- cbind(seq(1970,2050),0.4)
 health <- cbind(seq(1970,2050),0.015)
 
 # DST coverage among new and previously treated cases 
-dstneg_n <- logcurve(0,1,1975,2010,1,2)
-dstneg_p <- logcurve(0,45,1975,2010,1,2)
-dstpos_n <- logcurve(0,1,1975,2010,1,2)
-dstpos_p <- logcurve(0,45,1975,2010,1,2)
+dstneg_n <- logcurve(0,10,1985,2014,1,2)
+dstneg_p <- logcurve(0,99,1985,2014,1,2)
+dstpos_n <- logcurve(0,10,1985,2014,1,2)
+dstpos_p <- logcurve(0,99,1985,2014,1,2)
 
 # Sens (se) and spec (sp) of algorithms for sm+ (I), sm- (N) and DST testing (m)
 se_I_neg <- logcurve(100,100,1970,2010,1,2)
 se_N_neg <- logcurve(100,100,1970,2010,1,2)
 se_m_neg <- logcurve(100,100,1970,2010,1,2)
-sp_I_neg <- logcurve(95,95,1970,2010,1,2)
-sp_N_neg <- logcurve(95,95,1970,2010,1,2)
-sp_m_neg <- logcurve(95,95,1970,2010,1,2)
+sp_I_neg <- logcurve(100,100,1970,2010,1,2)
+sp_N_neg <- logcurve(100,100,1970,2010,1,2)
+sp_m_neg <- logcurve(100,100,1970,2010,1,2)
 
 se_I_pos <- logcurve(100,100,1970,2010,1,2)
 se_N_pos <- logcurve(100,100,1970,2010,1,2)
 se_m_pos <- logcurve(100,100,1970,2010,1,2)
-sp_I_pos <- logcurve(95,95,1970,2010,1,2)
-sp_N_pos <- logcurve(95,95,1970,2010,1,2)
-sp_m_pos <- logcurve(95,95,1970,2010,1,2)
+sp_I_pos <- logcurve(100,100,1970,2010,1,2)
+sp_N_pos <- logcurve(100,100,1970,2010,1,2)
+sp_m_pos <- logcurve(100,100,1970,2010,1,2)
 
 # Linkage to care
-l_s <- cbind(seq(1970,2050),0.8)
-l_m <- cbind(seq(1970,2050),0.8)
+l_s <- cbind(seq(1970,2050),0.5)
+l_m <- cbind(seq(1970,2050),0.5)
 
 # Treatment success by HIV (neg, pos no ART, pos on ART) and susceptibility
-tneg_s <- cbind(seq(1970,2050),0.91)
-tpos_s <- cbind(seq(1970,2050),0.72)
-tART_s <- cbind(seq(1970,2050),0.72)
-tneg_m <- cbind(seq(1970,2050),0.72)
-tpos_m <- cbind(seq(1970,2050),0.72)
-tART_m <- cbind(seq(1970,2050),0.72)
+tneg_s <- cbind(seq(1970,2050),0.5)
+tpos_s <- cbind(seq(1970,2050),0.5)
+tART_s <- cbind(seq(1970,2050),0.5)
+tneg_m <- cbind(seq(1970,2050),0.5)
+tpos_m <- cbind(seq(1970,2050),0.5)
+tART_m <- cbind(seq(1970,2050),0.5)
 
 # Set up TB parameters ###########################################################################################
 
@@ -77,14 +77,27 @@ e = 0.014
 # proportion primary (a), proportion smear pos (sig) and mortality rates (muN and muI) take different values for 
 # adults (>15) (_a), 0-4 (_0), 5-9 (_5) and 10-14 (_10)
 
-parms <- c(beta = 18, 
-           a_a = 0.115, a0 = 0.2551, a5 = 0.1357, a10 = 0.0541,  
-           v = 0.001,
-           p = 0.65,  
-           sig_a = 0.45, sig0 = 0.0804, sig5 = 0.0486, sig10 = 0.0994, rel_inf = 0.22, theta = 0.015, r = 0.2,
-           mu_N = 0.18, mu_N0 = 0.4205, mu_I = 0.20, mu_I0 = 0.6007, fit_cost = fit_cost, e = e, g=g,
+a_a = 0.115
+sig_a = 0.45
+mu_N = 0.21
+mu_I = 0.3
+# This RR value can be adjusted between 0.4 and 0.69 to change the burden of childhood TB
+# It directly controls the proportion primary in 10-14 year olds (a_10)
+# and indirectly controls all other age specific parameters using the RRs defined in "Data_load.R"
+RR_a_10 = 0.47
+
+parms <- c(beta = 15, 
+           a_a = a_a, a0 = a_a*RR_a_10*RR_a_0, a5 = a_a*RR_a_10*RR_a_5, a10 = a_a*RR_a_10,
+           v = 0.001, 
+           p = 0.65, 
+           sig_a = sig_a, sig0 = sig_a*RR_a_10*RR_sig_0, sig5 = sig_a*RR_a_10*RR_sig_5, sig10 = sig_a*RR_a_10*RR_sig_10,
+           rel_inf = 0.22, theta = 0.015, r = 0.2,
+           mu_N = mu_N, mu_N0 = mu_N*RR_a_10*RR_mu_0, mu_N5 = mu_N, mu_N10 = mu_N,
+           mu_I = mu_I, mu_I0 = mu_I*RR_a_10*RR_mu_0, mu_I5 = mu_I, mu_I10 = mu_I, 
+           fit_cost = fit_cost, e = e, g=g,
            eff_n = 0.61, eff_p = 0.45, 
-           muN_H = 0.42, muI_H = 0.6, RR1a = 2.6, RR2a = 1.36, RR1v = 2.6, RR2v = 1.36, RR1p = 0.8, RR2p = 1.3,
-           ART_TB1 = 0.204, ART_TB2 = 0.554, ART_TB3 = 0.70, ART_mort1 = 0.232, ART_mort2 = 0.629, ART_mort3 = 0.795,
+           muN_H = 0.42, muI_H = 0.60, RR1a = 2.6, RR2a = 1.36, RR1v = 2.6, RR2v = 1.36, RR1p = 0.8, RR2p = 1.3,
+           ART_TB1 = 0.204, ART_TB2 = 0.554, ART_TB3 = 0.7, ART_mort1 = 0.232, ART_mort2 = 0.629, ART_mort3 = 0.795,
            BCG_eff = 0.56,
            sig_H = 0.327,r_H=0.1,rel_inf_H=0.22,theta_H=0.0225)
+

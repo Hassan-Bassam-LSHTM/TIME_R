@@ -1,7 +1,7 @@
 ### Loads all external data sources and where appropriate creates forcing functions
 
 # Used to pick the country from cn
-c_list <- c("South_Africa","Vietnam","Bangladesh","Ghana")
+c_list <- c("Bangladesh","Ghana","India","South_Africa","Vietnam")
 cntry <- c_list[cn]
 
 # define number of TB, HIV and ART states
@@ -40,10 +40,10 @@ birth_rate <- cbind(seq(1970,2050),approx(UN_ind$Year,UN_ind$CBR,seq(1970,2050),
 
 ## Mortality ####################################################################################################################
 
-# Age specific mortality taken from demproj outputs
+# Age specific mortality taken from UN pop life tables
 mort_age <- as.data.frame(read.table(paste("Demog/",cntry,"/",cntry,"_mort_5yr.txt",sep=""),header=FALSE)) 
+mort_age[,18] <- mort_age[,17]/5
 mort_age[,2:17] <- (1-mort_age[,2:17])/5
-mort_age[,18] <- mort_age[,17]/2
 # Convert into forcing functions to be used in C code
 temp <- c(5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,100)
 for (i in 1:17){  
@@ -155,6 +155,15 @@ for (i in 1:17){
   }
 }
 
+#######################################################################################################################################
+# Set up the RR structure for the paediatric TB parameters
+# These values are used to multiply the RR for 
 
+RR_a_0 <- 4.72
+RR_a_5 <- 2.51
+RR_sig_0 <- 0.38
+RR_sig_5 <- 0.23
+RR_sig_10 <- 0.47
+RR_mu_0 <- 4.26
 
 

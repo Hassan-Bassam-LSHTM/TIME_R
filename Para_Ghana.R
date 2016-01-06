@@ -85,18 +85,34 @@ e = 0.017
 # proportion primary (a), proportion smear pos (sig) and mortality rates (muN and muI) take different values for 
 # adults (>15) (_a), 0-4 (_0), 5-9 (_5) and 10-14 (_10)
 
+a_a = 0.115
+sig_a = 0.4
+mu_N = 0.18
+mu_I = 0.2
+# This RR value can be adjusted between 0.4 and 0.69 to change the burden of childhood TB
+# It directly controls the proportion primary in 10-14 year olds (a_10)
+# and indirectly controls all other age specific parameters using the RRs defined in "Data_load.R"
+RR_a_10 = 0.4
+
 parms <- c(beta = 13.1, 
-           a_a = 0.115, a0 = 0.21712, a5 = 0.11546, a10 = 0.046,
+           a_a = a_a, a0 = a_a*RR_a_10*RR_a_0, a5 = a_a*RR_a_10*RR_a_5, a10 = a_a*RR_a_10,
            v = 0.0012, 
            p = 0.65, 
-           sig_a = 0.40, sig0 = 0.0608, sig5 = 0.0368, sig10 = 0.0752, rel_inf = 0.25, theta = 0.01, r = 0.2,
-           mu_N = 0.18, mu_N0 = 0.35784, mu_N5 = 0.21, mu_N10 = 0.21, 
-           mu_I = 0.20, mu_I0 = 0.5112, mu_I5 = 0.30, mu_I10 = 0.30, 
+           sig_a = sig_a, sig0 = sig_a*RR_a_10*RR_sig_0, sig5 = sig_a*RR_a_10*RR_sig_5, sig10 = sig_a*RR_a_10*RR_sig_10, 
+           rel_inf = 0.25, theta = 0.01, r = 0.2,
+           mu_N = mu_N, mu_N0 = 0.21*RR_a_10*RR_mu_0, mu_N5 = 0.21, mu_N10 = 0.21,
+           mu_I = mu_I, mu_I0 = 0.3*RR_a_10*RR_mu_0, mu_I5 = 0.3, mu_I10 = 0.3, 
            fit_cost = fit_cost, e = e, g=g,
            eff_n = 0.61, eff_p = 0.40, 
            muN_H = 0.50, muI_H = 0.82, RR1a = 2.6, RR2a = 1.42, RR1v = 3.2, RR2v = 3.5, RR1p = 0.5, RR2p = 2,
            ART_TB1 = 0.1575, ART_TB2 = 0.4275, ART_TB3 = 0.54, ART_mort1 = 0.1070, ART_mort2 = 0.5070, ART_mort3 = 0.64,
            BCG_eff = 0.72,
            sig_H = 0.327,r_H=0.1,rel_inf_H=0.25,theta_H=0.0225)
+
+
+
+
+
+
 
 

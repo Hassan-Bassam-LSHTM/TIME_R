@@ -237,7 +237,7 @@ void event(int *n, double *t, double *y)
   }
   /* Then add births into group 0 - only susceptibles get born */ 
   y[0] = y[0] + birth_rate*sumsum(temp,0,7394)/1000;
-/*y[0] = 600;*/
+
 }
 
 /* ###### DERIVATIVE FUNCTIONS - THIS IS THE MODEL ITSELF ###### */

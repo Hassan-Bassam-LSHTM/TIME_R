@@ -85,7 +85,7 @@ e = 0.017
 # proportion primary (a), proportion smear pos (sig) and mortality rates (muN and muI) take different values for 
 # adults (>15) (_a), 0-4 (_0), 5-9 (_5) and 10-14 (_10)
 
-parms <- c(beta = 13.1, 
+parms <- c(beta = 0, 
            a_a = 0.115, a0 = 0.21712, a5 = 0.11546, a10 = 0.046,
            v = 0.0012, 
            p = 0.65, 

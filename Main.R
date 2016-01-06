@@ -6,7 +6,7 @@
 setwd("C:/Users/TOM SUMMER/Documents/TIME_research/TIME_R")
 
 ## Define Country (1=Bangladesh, 2=Ghana, 3=India, 4=South_Africa, 5=Vietnam)
-cn <- 1
+cn <- 5
 
 ## Define age structure of the model (5 = 5 year age bins (0-4,5-9 etc); 1 = single year age bins)
 n_age <- 5

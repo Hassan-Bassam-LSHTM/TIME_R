@@ -1,7 +1,7 @@
 ### Loads all external data sources and where appropriate creates forcing functions
 
 # Used to pick the country from cn
-c_list <- c("South_Africa","Vietnam","Bangladesh","Ghana")
+c_list <- c("Bangladesh","Ghana","India","South_Africa","Vietnam")
 cntry <- c_list[cn]
 
 # Define number of TB, HIV and ART states
@@ -142,5 +142,22 @@ for (i in 1:17){
     }
   }
 }
+
+#######################################################################################################################################
+# Set up the RR structure for the paediatric TB parameters
+# These values are used to multiply the RR for 
+
+RR_a_0 <- 4.72
+RR_a_5 <- 2.51
+RR_sig_0 <- 0.38
+RR_sig_5 <- 0.23
+RR_sig_10 <- 0.47
+RR_mu_0 <- 4.26
+
+
+
+
+
+
 
 

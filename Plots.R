@@ -18,6 +18,21 @@ temp_data <- melt(UN_pop_age_t,id="Year")
 temp_data <- cbind(temp_data,"UNPP")
 colnames(temp_data) <- c(colnames(temp_data)[1:3],"Model")
 
+# TIME values
+temp <- as.data.frame(read.table(paste("Demog/",cntry,"/",cntry,"_TIME_pop_age.txt",sep=""),header=TRUE,fill=TRUE)) 
+# Need to re-arrage to get in year vs age format
+TIME_pop <- mat.or.vec(81,19)
+TIME_pop[,1] <- seq(1970,2050)
+for (i in 1:81){
+  j <- (i-1)*19+2
+  TIME_pop[i,2:19]=temp[j:(j+17),2]/1000
+}
+TIME_pop <- cbind(TIME_pop,0,0)
+colnames(TIME_pop) <- colnames(UN_pop_age_t)
+TIME_pop_m <- melt(as.data.frame(TIME_pop),id="Year")
+TIME_pop_m <- cbind(TIME_pop_m,"TIME")
+colnames(TIME_pop_m) <- c(colnames(TIME_pop_m)[1:3],"Model")
+
 # sum up model outputs over age groups and turn into long format
 tot <- mapply(function(x,y) sum(out[x,seq(y+1,n_state+1,81)]),rep(seq(1,81),each=81),seq(1,81))
 dim(tot) <- c(81,81)
@@ -42,7 +57,7 @@ temp_model_m <- melt(temp_model,id="Year")
 temp_model_m <- cbind(temp_model_m,"R")
 colnames(temp_model_m) <- c(colnames(temp_model_m)[1:3],"Model")
 
-dat_to_plot <- rbind(temp_data,temp_model_m)
+dat_to_plot <- rbind(temp_data,temp_model_m,TIME_pop_m)
 
 plot_pop <- ggplot(dat_to_plot,aes(x=Year,y=value,colour=Model))+
   geom_line()+
