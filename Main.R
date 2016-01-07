@@ -32,10 +32,18 @@ source(paste("Data_load",suf,".R",sep=""))
 ## This section needs to be rerun each time you want to generate model outputs
 
 # Set up the forcing functions and parameters
-source(paste("Para_",cntry,".R",sep=""))
+#source(paste("Para_",cntry,".R",sep=""))
 
 # Run the model (and time it) 
-system.time(source(paste("Run_model",suf,".R",sep="")))
+#system.time(source(paste("Run_model",suf,".R",sep="")))
+
+t <- rep(0,50)
+for (itr in 1:50){
+  ptm <- proc.time()
+  source(paste("Para_",cntry,".R",sep=""))
+  source(paste("Run_model",suf,".R",sep=""))
+  t[itr] <- proc.time() - ptm
+}
 
 ## Generate plots of demography and TB outputs (prev, inc, mort, notif) - resulting figures are plot_pop and plot_TB (_5yr)
 if (plotting==1){
