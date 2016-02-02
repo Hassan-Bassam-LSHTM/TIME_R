@@ -56,6 +56,10 @@ tneg_m <- cbind(seq(1970,2050),0.5)
 tpos_m <- cbind(seq(1970,2050),0.5)
 tART_m <- cbind(seq(1970,2050),0.5)
 
+# Coverage of HIV testing and (subsequent) ART initiation in notified TB cases
+HIV_test <- cbind(seq(1970,2050),0)
+ART_link <- cbind(seq(1970,2050),0)
+
 # Set up TB parameters ###########################################################################################
 
 # Fitness of MDR (fit_cost), used to calculate parameter for superinfections (g)

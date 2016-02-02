@@ -1,7 +1,7 @@
 ### Loads all external data sources and where appropriate creates forcing functions
 
 # Used to pick the country from cn
-c_list <- c("Bangladesh","Ghana","India","South_Africa","Vietnam")
+c_list <- c("Bangladesh","Ghana","South_Africa")
 cntry <- c_list[cn]
 
 # Define number of TB, HIV and ART states

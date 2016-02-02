@@ -20,8 +20,8 @@ source(paste("Libraries_and_dll",suf,".R",sep=""))
 ##################################################################################################################################
 ## This section only needs to be run once, unless you change the age structure (n_age) or the country (cn) when it must be rerun 
 
-## Define Country (1=Bangladesh, 2=Ghana, 3=India, 4=South_Africa, 5=Vietnam)
-cn <- 2
+## Define Country (1=Bangladesh, 2=Ghana, 3=South_Africa)
+cn <- 3
 
 # Load external data sources and create forcing functions
 source(paste("Data_load",suf,".R",sep=""))
