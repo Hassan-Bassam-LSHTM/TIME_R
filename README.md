@@ -6,7 +6,7 @@
 # This version replicates the core dynamic transmission model
  
 # The model is implemented in R, but uses compiled C to code the equations (for computational efficiency)
-# The model can be run in two age structure configurations: single year age bins; 5 year age bins
+# The model can be run in two age structure configurations: single year age bins; 5 year age bins (0-4,5-9,...)
  
 # The model consists of the following files:
  

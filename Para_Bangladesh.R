@@ -14,14 +14,14 @@
 BCG_cov <- cbind(seq(0,2050),1)
 
 # Case detection rate by HIV (neg/pos)
-kneg <- logcurve(50,100,1985,2014,0.8,2)
-kpos <- logcurve(50,100,1985,2014,0.8,2)
+kneg <- logcurve(50,65,1985,2014,0.8,2)
+kpos <- logcurve(50,65,1985,2014,0.8,2)
 
 # Relative detection smear neg
-rel_d <- cbind(seq(1970,2050),0.5) 
+rel_d <- cbind(seq(1970,2050),0.8) 
 
 # Relative presentation healthy 
-health <- cbind(seq(1970,2050),0.0015) 
+health <- cbind(seq(1970,2050),0.0013) 
 
 # DST coverage among new and previously treated cases 
 dstneg_n <- logcurve(0,35,1985,2014,1,2) 
@@ -45,17 +45,21 @@ sp_N_pos <- logcurve(100,100,1970,2010,1,2)
 sp_m_pos <- logcurve(100,100,1970,2010,1,2)
 
 # Linkage to care
-l_s <- cbind(seq(1970,2050),0.5)
-l_m <- cbind(seq(1970,2050),0.5)
+l_s <- cbind(seq(1970,2050),0.70)
+l_m <- cbind(seq(1970,2050),0.50)
 
 # Treatment success by HIV (neg, pos no ART, pos on ART) and susceptibility
-tneg_s <- cbind(seq(1970,2050),0.5)
-tpos_s <- cbind(seq(1970,2050),0.5)
-tART_s <- cbind(seq(1970,2050),0.5)
+tneg_s <- cbind(seq(1970,2050),0.90)
+tpos_s <- cbind(seq(1970,2050),0.75)
+tART_s <- cbind(seq(1970,2050),0.75)
 
-tneg_m <- cbind(seq(1970,2050),0.5)
-tpos_m <- cbind(seq(1970,2050),0.5)
-tART_m <- cbind(seq(1970,2050),0.5)
+tneg_m <- cbind(seq(1970,2050),0.72)
+tpos_m <- cbind(seq(1970,2050),0.72)
+tART_m <- cbind(seq(1970,2050),0.72)
+
+# Coverage of HIV testing and (subsequent) ART initiation in notified TB cases
+HIV_test <- cbind(seq(1970,2050),0)
+ART_link <- cbind(seq(1970,2050),0)
 
 # Set up TB parameters ###########################################################################################
 
@@ -78,7 +82,7 @@ e = 0.014
 # proportion primary (a), proportion smear pos (sig) and mortality rates (muN and muI) take different values for 
 # adults (>15) (_a), 0-4 (_0), 5-9 (_5) and 10-14 (_10)
 
-a_a = 0.115
+a_a = 0.12
 sig_a = 0.45
 mu_N = 0.21
 mu_I = 0.3
@@ -87,9 +91,9 @@ mu_I = 0.3
 # and indirectly controls all other age specific parameters using the RRs defined in "Data_load.R"
 RR_a_10 = 0.47
 
-parms <- c(beta = 15, 
+parms <- c(beta = 17, 
            a_a = a_a, a0 = a_a*RR_a_10*RR_a_0, a5 = a_a*RR_a_10*RR_a_5, a10 = a_a*RR_a_10,
-           v = 0.001, 
+           v = 0.0015, 
            p = 0.65, 
            sig_a = sig_a, sig0 = sig_a*RR_a_10*RR_sig_0, sig5 = sig_a*RR_a_10*RR_sig_5, sig10 = sig_a*RR_a_10*RR_sig_10,  
            rel_inf = 0.22, theta = 0.015, r = 0.2,

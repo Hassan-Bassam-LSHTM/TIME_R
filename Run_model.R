@@ -23,7 +23,7 @@ force <- list(birth_rate,
               se_I_pos,se_N_pos,se_m_pos,sp_I_pos,sp_N_pos,sp_m_pos,
               health,
               A0,A5,A10,A15,A20,A25,A30,A35,A40,A45,A50,A55,A60,A65,A70,A75,A80,
-              Athresh)
+              Athresh,HIV_test,ART_link)
 
 # EQUILIBRIUM RUN ################################################################################################
 

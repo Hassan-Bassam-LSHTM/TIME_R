@@ -1,13 +1,9 @@
 /* TB model in C code to call from R */
 
-/* Version 10 - converted to single year age bins and aging done via events- this ensures individuals remain in the correct age cohorts */
-/*             matches TIME within reasonable bounds with the exception of ART                                                          */
-/*             this version updated to include true and false positive diagnosis                                                        */
-/*             and post PT compartment added - just for false positives at present - no other PT modelled yet                           */
-/*             ART coverage now age specific                                                                                            */   
+/* Single year age bin version */
 
-/* Can be compiled within R with system("R CMD SHLIB TB_model_v10.c") */
-/* This creates a dynamic linked library (.dll) which can be loaded (dyn.load(TB_model_v10.dll)) into R and used as the model function in a call to desolve */
+/* Can be compiled within R with system("R CMD SHLIB TB_model.c") */
+/* This creates a dynamic linked library (.dll) which can be loaded (dyn.load(TB_model.dll)) into R and used as the model function in a call to desolve */
 
 /* C libraries needed */
 #include <R.h>
@@ -16,7 +12,7 @@
 /* You need to define number of parameters and forcing functions passed to the model here */
 /* These must match number in intializer functions below */
 static double parms[404];
-static double forc[164];
+static double forc[166];
 
 /* ###### A TRICK TO KEEP UP WITH THE PARAMETERS AND FORCINGS ###### */
 
@@ -258,6 +254,9 @@ static double forc[164];
 
 #define Athresh forc[163] /* ART eligibility threshold (CD4 category) */
 
+#define HIV_test forc[164] /* proportion of notifed TB cases tested for HIV */
+#define ART_link forc[165] /* proportion of those tested positive linked to ART */
+
 /* ###### FUNCTION TO SUM ARRAY FROM ELEMENT i_start TO i_end ###### */
 double sumsum(double ar[], int i_start, int i_end)
 {
@@ -280,7 +279,7 @@ void parmsc(void (* odeparms)(int *, double *))
 /* ###### FUNCTION TO INITIALIZE FORCINGS PASSED FROM R - if the number of parameters is changed you must update N here ###### */
 void forcc(void (* odeforcs)(int *, double *))
 {
-    int N=164;
+    int N=166;
     odeforcs(&N, forc);
 }
 
@@ -889,88 +888,199 @@ void derivs1(int *neq, double *t, double *y, double *ydot, double *yout, int *ip
       double PTp_to_Lmp = FM*(1-a_age[i])*(1-p)*g*PTp[i];                         /* Post PT to latent DR (prior Rx) */
       double PTp_to_Nmp = FM*a_age[i]*(1-p)*(1-sig_age[i])*PTp[i];                /* Post PT to smear negative DR disease (prior Rx) */
       double PTp_to_Imp = FM*a_age[i]*(1-p)*sig_age[i]*PTp[i];                    /* Post PT to smear positive DR disease (prior Rx) */
-          
+      
+      /* Calculate "care" flows here and use these in the derivatives */
+      
+      double false_pos = health*kneg*(1-sp_I_neg*sp_N_neg)*l_s;   /* Susceptible, latently infected and post-PT are false pos notif at this rate (includes link to Rx). */
+                                                                  /* This only has any effect in those latently infected with drug sus strains. tneg_s complete Rx and move to PTn/PTp */
+      /* sm-, drug sus, no Rx history */    
+      double Nsn_pos = kneg*se_N_neg*rel_d*Nsn[i];            /* TB positive - move all out of Nsn */
+      double Nsn_dst = Nsn_pos*dstneg_n;                      /* Get DST */
+      double Nsn_dst_fpos = Nsn_dst*(1-sp_m_neg);             /* False pos on DST */
+      double Nsn_first = l_s*(Nsn_pos - Nsn_dst_fpos);        /* Start first line Rx (correct) */     
+      double Nsn_second = l_m*(Nsn_dst_fpos);                 /* Start second line treatment (incorrect) */
+      double Nsn_lost = Nsn_pos - Nsn_first - Nsn_second;     /* Positive cases lost to follow up  - go to Nsn */ 
+      double Nsn_res = Nsn_first*e;                           /* Develop resistance - go to Nmp */
+      double Nsn_first_success = (Nsn_first-Nsn_res)*tneg_s;  /* First line success - go to Lsp */
+      double Nsn_first_fail = (Nsn_first-Nsn_res)*(1-tneg_s); /* First line failure - go to Nsp */
+      double Nsn_second_success = Nsn_second*tneg_m;          /* Second line success - go to Lsp */
+      double Nsn_second_fail = Nsn_second*(1-tneg_m);         /* Second line failure - go to Nsp */
+
+      /* sm-, drug sus, previous Rx history */    
+      double Nsp_pos = kneg*se_N_neg*rel_d*Nsp[i];            /* TB positive - move all out of Nsp */
+      double Nsp_dst = Nsp_pos*dstneg_p;                      /* Get DST */
+      double Nsp_dst_fpos = Nsp_dst*(1-sp_m_neg);             /* False pos on DST */
+      double Nsp_first = l_s*(Nsp_pos - Nsp_dst_fpos);        /* Start first line Rx (correct) */     
+      double Nsp_second = l_m*(Nsp_dst_fpos);                 /* Start second line treatment (incorrect) */
+      double Nsp_lost = Nsp_pos - Nsp_first - Nsp_second;     /* Positive cases lost to follow up  - go to Nsp */ 
+      double Nsp_res = Nsp_first*e;                           /* Develop resistance - go to Nmp */
+      double Nsp_first_success = (Nsp_first-Nsp_res)*tneg_s;  /* First line success - go to Lsp */
+      double Nsp_first_fail = (Nsp_first-Nsp_res)*(1-tneg_s); /* First line failure - go to Nsp */
+      double Nsp_second_success = Nsp_second*tneg_m;          /* Second line success - go to Lsp */
+      double Nsp_second_fail = Nsp_second*(1-tneg_m);         /* Second line failure - go to Nsp */
+
+      /* sm+, drug sus, no Rx history */    
+      double Isn_pos = kneg*se_I_neg*Isn[i];                  /* TB positive - move all out of Isn */
+      double Isn_dst = Isn_pos*dstneg_n;                      /* Get DST */
+      double Isn_dst_fpos = Isn_dst*(1-sp_m_neg);             /* False pos on DST */
+      double Isn_first = l_s*(Isn_pos - Isn_dst_fpos);        /* Start first line Rx (correct) */     
+      double Isn_second = l_m*(Isn_dst_fpos);                 /* Start second line treatment (incorrect) */
+      double Isn_lost = Isn_pos - Isn_first - Isn_second;     /* Positive cases lost to follow up  - go to Isn */ 
+      double Isn_res = Isn_first*e;                           /* Develop resistance - go to Imp */
+      double Isn_first_success = (Isn_first-Isn_res)*tneg_s;  /* First line success - go to Lsp */
+      double Isn_first_fail = (Isn_first-Isn_res)*(1-tneg_s); /* First line failure - go to Isp */
+      double Isn_second_success = Isn_second*tneg_m;          /* Second line success - go to Lsp */
+      double Isn_second_fail = Isn_second*(1-tneg_m);         /* Second line failure - go to Isp */
+
+      /* sm+, drug sus, previous Rx history */    
+      double Isp_pos = kneg*se_I_neg*Isp[i];                  /* TB positive - move all out of Isp */
+      double Isp_dst = Isp_pos*dstneg_p;                      /* Get DST */
+      double Isp_dst_fpos = Isp_dst*(1-sp_m_neg);             /* False pos on DST */
+      double Isp_first = l_s*(Isp_pos - Isp_dst_fpos);        /* Start first line Rx (correct) */     
+      double Isp_second = l_m*(Isp_dst_fpos);                 /* Start second line Rx (incorrect) */
+      double Isp_lost = Isp_pos - Isp_first - Isp_second;     /* Positive cases lost to follow up  - go to Isp */ 
+      double Isp_res = Isp_first*e;                           /* Develop resistance - go to Imp */
+      double Isp_first_success = (Isp_first-Isp_res)*tneg_s;  /* First line success - go to Lsp */
+      double Isp_first_fail = (Isp_first-Isp_res)*(1-tneg_s); /* First line failure - go to Isp */
+      double Isp_second_success = Isp_second*tneg_m;          /* Second line success - go to Lsp */
+      double Isp_second_fail = Isp_second*(1-tneg_m);         /* Second line failure - go to Isp */
+
+      /* sm-, MDR, no Rx history */
+      double Nmn_pos = kneg*se_N_neg*rel_d*Nmn[i];            /* TB positive - move all out of Nmn */
+      double Nmn_dst = Nmn_pos*dstneg_n;                      /* Get DST */
+      double Nmn_dst_pos = Nmn_dst*se_m_neg;                  /* True pos on DST */
+      double Nmn_first = l_s*(Nmn_pos - Nmn_dst_pos);         /* Start first line Rx (incorrect) */  
+      double Nmn_second = l_m*Nmn_dst_pos;                    /* Start second line Rx (correct) */
+      double Nmn_lost = Nmn_pos - Nmn_first - Nmn_second;     /* Positive cases lost to follow up - go to Nmn */
+      double Nmn_first_success = Nmn_first*tneg_s*eff_n;      /* First line success - go to Lmp */
+      double Nmn_first_fail = Nmn_first - Nmn_first_success;  /* First line failure - go to Nmp */
+      double Nmn_second_success = Nmn_second*tneg_m;          /* Second line success - go to Lmp */
+      double Nmn_second_fail = Nmn_second*(1-tneg_m);         /* Second line failure - go to Nmp */
+
+      /* sm-, MDR, previous Rx history */
+      double Nmp_pos = kneg*se_N_neg*rel_d*Nmp[i];            /* TB positive - move all out of Nmp */
+      double Nmp_dst = Nmp_pos*dstneg_p;                      /* Get DST */
+      double Nmp_dst_pos = Nmp_dst*se_m_neg;                  /* True pos on DST */
+      double Nmp_first = l_s*(Nmp_pos - Nmp_dst_pos);         /* Start first line Rx (incorrect) */  
+      double Nmp_second = l_m*Nmp_dst_pos;                    /* Start second line Rx (correct) */
+      double Nmp_lost = Nmp_pos - Nmp_first - Nmp_second;     /* Positive cases lost to follow up - go to Nmp */
+      double Nmp_first_success = Nmp_first*tneg_s*eff_p;      /* First line success - go to Lmp */
+      double Nmp_first_fail = Nmp_first - Nmp_first_success;  /* First line failure - go to Nmp */
+      double Nmp_second_success = Nmp_second*tneg_m;          /* Second line success - go to Lmp */
+      double Nmp_second_fail = Nmp_second*(1-tneg_m);         /* Second line failure - go to Nmp */
+
+      /* sm+, MDR, no Rx history */
+      double Imn_pos = kneg*se_I_neg*Imn[i];                  /* TB positive - move all out of Imn */
+      double Imn_dst = Imn_pos*dstneg_n;                      /* Get DST */
+      double Imn_dst_pos = Imn_dst*se_m_neg;                  /* True pos on DST */
+      double Imn_first = l_s*(Imn_pos - Imn_dst_pos);         /* Start first line Rx (incorrect) */  
+      double Imn_second = l_m*Imn_dst_pos;                    /* Start second line Rx (correct) */
+      double Imn_lost = Imn_pos - Imn_first - Imn_second;     /* Positive cases lost to follow up - go to Imn */
+      double Imn_first_success = Imn_first*tneg_s*eff_n;      /* First line success - go to Lmp */
+      double Imn_first_fail = Imn_first - Imn_first_success;  /* First line failure - go to Imp */
+      double Imn_second_success = Imn_second*tneg_m;          /* Second line success - go to Lmp */
+      double Imn_second_fail = Imn_second*(1-tneg_m);         /* Second line failure - go to Imp */
+
+      /* sm+, MDR, previous Rx history */
+      double Imp_pos = kneg*se_I_neg*Imp[i];                  /* TB positive - move all out of Imp */
+      double Imp_dst = Imp_pos*dstneg_p;                      /* Get DST */
+      double Imp_dst_pos = Imp_dst*se_m_neg;                  /* True pos on DST */
+      double Imp_first = l_s*(Imp_pos - Imp_dst_pos);         /* Start first line Rx (incorrect) */  
+      double Imp_second = l_m*Imp_dst_pos;                    /* Start second line Rx (correct) */
+      double Imp_lost = Imp_pos - Imp_first - Imp_second;     /* Positive cases lost to follow up - go to Imp */
+      double Imp_first_success = Imp_first*tneg_s*eff_p;      /* First line success - go to Lmp */
+      double Imp_first_fail = Imp_first - Imp_first_success;  /* First line failure - go to Imp */
+      double Imp_second_success = Imp_second*tneg_m;          /* Second line success - go to Lmp */
+      double Imp_second_fail = Imp_second*(1-tneg_m);         /* Second line failure - go to Imp */
+
+
       /* Susceptible - NOTE BIRTHS ARE ADDED TO HERE IN THE EVENTS FUNCTION*/
-      dS[i] = - (FS + FM)*S[i] - forc[iz+82]*S[i] - m_b[i]*S[i] + (S[i]/tot_age[i])*(forc[iz+116]/5);
+      dS[i] = - (FS + FM)*S[i] - /* Infection */ 
+              forc[iz+82]*S[i] - m_b[i]*S[i] + (S[i]/tot_age[i])*(forc[iz+116]/5); /* HIV, death, migration */
        
       /* Latent, ds, naive */
-      dLsn[i] = - m_b[i]*Lsn[i] + S_to_Lsn + Lmn_to_Lsn + r*(Isn[i] + Nsn[i]) - Lsn_to_Lmn - Lsn_to_Nsn - Lsn_to_Isn  - Lsn_to_Nmn - Lsn_to_Imn -
-                forc[iz+82]*Lsn[i] + (Lsn[i]/tot_age[i])*(forc[iz+116]/5) + PTn_to_Lsn -
-                health*kneg*(1-sp_I_neg*sp_N_neg)*l_s*tneg_s*Lsn[i];                   
+      dLsn[i] = - m_b[i]*Lsn[i] + /* Death */
+                S_to_Lsn + Lmn_to_Lsn + PTn_to_Lsn- Lsn_to_Lmn - Lsn_to_Nsn - Lsn_to_Isn  - Lsn_to_Nmn - Lsn_to_Imn - /* Infection and disease */
+                forc[iz+82]*Lsn[i] + (Lsn[i]/tot_age[i])*(forc[iz+116]/5) + r*(Isn[i] + Nsn[i])  - /* HIV, migration, self-cure */
+                false_pos*tneg_s*Lsn[i]; /* False positive Rx */                   
       
       /* Latent, ds, prev */
-      dLsp[i] = - m_b[i]*Lsp[i] + Lmp_to_Lsp + r*(Isp[i] + Nsp[i]) - Lsp_to_Lmp - Lsp_to_Nsp - Lsp_to_Isp  - Lsp_to_Nmp - Lsp_to_Imp +     
-                kneg*(l_s*(1-e)*tneg_s*((dstneg_p*sp_m_neg)+(1-dstneg_p)) + l_m*tneg_m*dstneg_p*(1-sp_m_neg))*(se_I_neg*Isp[i] + se_N_neg*rel_d*Nsp[i]) + 
-                kneg*(l_s*(1-e)*tneg_s*((dstneg_n*sp_m_neg)+(1-dstneg_n)) + l_m*tneg_m*dstneg_n*(1-sp_m_neg))*(se_I_neg*Isn[i] + se_N_neg*rel_d*Nsn[i]) - /* Care */
-                forc[iz+82]*Lsp[i] + (Lsp[i]/tot_age[i])*(forc[iz+116]/5) + PTp_to_Lsp -
-                health*kneg*(1-sp_I_neg*sp_N_neg)*l_s*tneg_s*Lsp[i];         
+      dLsp[i] = - m_b[i]*Lsp[i] +  /* Death */ 
+                Lmp_to_Lsp + PTp_to_Lsp - Lsp_to_Lmp - Lsp_to_Nsp - Lsp_to_Isp  - Lsp_to_Nmp - Lsp_to_Imp + /* Infection and disease */   
+                Nsn_first_success + Nsn_second_success + Nsp_first_success + Nsp_second_success + Isn_first_success + Isn_second_success + Isp_first_success + Isp_second_success - /* Rx */
+                forc[iz+82]*Lsp[i] + (Lsp[i]/tot_age[i])*(forc[iz+116]/5) + r*(Isp[i] + Nsp[i]) - /* HIV, migration, self-cure */
+                false_pos*tneg_s*Lsp[i]; /* False positive Rx */         
 
       /* Latent, mdr, naive */ 
-      dLmn[i] = - m_b[i]*Lmn[i] + S_to_Lmn + Lsn_to_Lmn + r*(Imn[i] + Nmn[i]) - Lmn_to_Lsn - Lmn_to_Nsn - Lmn_to_Isn - Lmn_to_Nmn - Lmn_to_Imn  -                
-                forc[iz+82]*Lmn[i] + (Lmn[i]/tot_age[i])*(forc[iz+116]/5) + PTn_to_Lmn;              
+      dLmn[i] = - m_b[i]*Lmn[i] + /* Death */
+                S_to_Lmn + Lsn_to_Lmn + PTn_to_Lmn - Lmn_to_Lsn - Lmn_to_Nsn - Lmn_to_Isn - Lmn_to_Nmn - Lmn_to_Imn - /* Infection and disease */              
+                forc[iz+82]*Lmn[i] + (Lmn[i]/tot_age[i])*(forc[iz+116]/5) + r*(Imn[i] + Nmn[i]); /* HIV, migration, self-cure */            
       
       /* Latent, mdr, prev */
-      dLmp[i] = - m_b[i]*Lmp[i] + Lsp_to_Lmp + r*(Imp[i] + Nmp[i]) - Lmp_to_Lsp - Lmp_to_Nsp - Lmp_to_Isp - Lmp_to_Nmp - Lmp_to_Imp +
-                kneg*(dstneg_p*se_m_neg*l_m*tneg_m + l_s*tneg_s*eff_p*((1-dstneg_p)+dstneg_p*(1-se_m_neg)))*(se_I_neg*Imp[i] + se_N_neg*rel_d*Nmp[i]) +
-                kneg*(dstneg_n*se_m_neg*l_m*tneg_m + l_s*tneg_s*eff_n*((1-dstneg_n)+dstneg_n*(1-se_m_neg)))*(se_I_neg*Imn[i] + se_N_neg*rel_d*Nmn[i]) - /* Care */
-                forc[iz+82]*Lmp[i] + (Lmp[i]/tot_age[i])*(forc[iz+116]/5) + PTp_to_Lmp;  
+      dLmp[i] = - m_b[i]*Lmp[i] + /* Death */
+                Lsp_to_Lmp + PTp_to_Lmp - Lmp_to_Lsp - Lmp_to_Nsp - Lmp_to_Isp - Lmp_to_Nmp - Lmp_to_Imp + /* Infection and disease */
+                Nmn_first_success + Nmn_second_success + Nmp_first_success + Nmp_second_success + Imn_first_success + Imn_second_success + Imp_first_success + Imp_second_success - /* Rx */
+                forc[iz+82]*Lmp[i] + (Lmp[i]/tot_age[i])*(forc[iz+116]/5)  + r*(Imp[i] + Nmp[i]); /* HIV, migration, self-cure */  
                 
       /* Smear neg, ds, new */
-      dNsn[i] = - m_b[i]*Nsn[i] + S_to_Nsn + Lsn_to_Nsn + Lmn_to_Nsn - (theta + r + muN_age[i])*Nsn[i] -
-                kneg*se_N_neg*rel_d*(l_s*(dstneg_n*sp_m_neg + (1-dstneg_n)) + dstneg_n*(1-sp_m_neg)*l_m)*Nsn[i] - /* care */ 
-                forc[iz+82]*Nsn[i] + (Nsn[i]/tot_age[i])*(forc[iz+116]/5) + PTn_to_Nsn;  
+      dNsn[i] = - m_b[i]*Nsn[i] + /* Death */ 
+                S_to_Nsn + Lsn_to_Nsn + Lmn_to_Nsn + PTn_to_Nsn - /* Disease */
+                Nsn_pos + Nsn_lost - /* Diagnosis, pre Rx lost */ 
+                forc[iz+82]*Nsn[i] + (Nsn[i]/tot_age[i])*(forc[iz+116]/5)  - (theta + r + muN_age[i])*Nsn[i]; /* HIV, migration, sm conversion, self-cure, TB death */ 
       
       /* Smear neg, ds, prev */                             
-      dNsp[i] = - m_b[i]*Nsp[i] + Lsp_to_Nsp + Lmp_to_Nsp - (theta + r + muN_age[i])*Nsp[i] -
-                kneg*rel_d*se_N_neg*((1-e)*tneg_s*l_s*(sp_m_neg*dstneg_p + (1-dstneg_p)) + dstneg_p*(1-sp_m_neg)*l_m*tneg_m + l_s*e*(sp_m_neg*dstneg_p +(1-dstneg_p)))*Nsp[i] + 
-                kneg*rel_d*se_N_neg*(l_s*(1-e)*(1-tneg_s)*(dstneg_n*sp_m_neg + (1-dstneg_n)) + dstneg_n*(1-sp_m_neg)*(1-tneg_m)*l_m)*Nsn[i] - /* Care */
-                forc[iz+82]*Nsp[i] + (Nsp[i]/tot_age[i])*(forc[iz+116]/5) + PTp_to_Nsp;  
+      dNsp[i] = - m_b[i]*Nsp[i] + /* Death */
+                Lsp_to_Nsp + Lmp_to_Nsp + PTp_to_Nsp - /* Disease */
+                Nsp_pos + Nsp_lost + Nsn_first_fail + Nsn_second_fail + Nsp_first_fail + Nsp_second_fail - /* Diagnosis, pre Rx lost, failed Rx */
+                forc[iz+82]*Nsp[i] + (Nsp[i]/tot_age[i])*(forc[iz+116]/5) - (theta + r + muN_age[i])*Nsp[i]; /* HIV, migration, sm conversion, self-cure, TB death */  
 
       /* Smear neg, mdr, new */
-      dNmn[i] = - m_b[i]*Nmn[i] + S_to_Nmn + Lsn_to_Nmn + Lmn_to_Nmn - (theta + r + muN_age[i])*Nmn[i] -
-                kneg*rel_d*se_N_neg*(l_m*dstneg_n*se_m_neg + l_s*((1-dstneg_n)+dstneg_n*(1-se_m_neg)))*Nmn[i] - /* Care */
-                forc[iz+82]*Nmn[i] + (Nmn[i]/tot_age[i])*(forc[iz+116]/5) + PTn_to_Nmn;   
+      dNmn[i] = - m_b[i]*Nmn[i] + /* Death */ 
+                S_to_Nmn + Lsn_to_Nmn + Lmn_to_Nmn + PTn_to_Nmn - /* Disease */
+                Nmn_pos + Nmn_lost - /* Diagnosis, pre Rx lost */
+                forc[iz+82]*Nmn[i] + (Nmn[i]/tot_age[i])*(forc[iz+116]/5)  - (theta + r + muN_age[i])*Nmn[i]; /* HIV, migration, sm conversion, self-cure, TB death */    
                    
       /* Smear neg, mdr, prev */
-      dNmp[i] = - m_b[i]*Nmp[i] + Lsp_to_Nmp + Lmp_to_Nmp - (theta + r + muN_age[i])*Nmp[i] -
-                kneg*rel_d*se_N_neg*(dstneg_p*se_m_neg*l_m*tneg_m + l_s*tneg_s*eff_p*((1-dstneg_p)+dstneg_p*(1-se_m_neg)))*Nmp[i] + 
-                kneg*l_s*rel_d*e*se_N_neg*((dstneg_n*sp_m_neg+(1-dstneg_n))*Nsn[i]+(dstneg_p*sp_m_neg+(1-dstneg_p))*Nsp[i]) + 
-                kneg*se_N_neg*rel_d*(dstneg_n*l_m*se_m_neg*(1-tneg_m) + l_s*(1-(tneg_s*eff_n))*((1-dstneg_n)+dstneg_n*(1-se_m_neg)))*Nmn[i] - /* Care */
-                forc[iz+82]*Nmp[i] + (Nmp[i]/tot_age[i])*(forc[iz+116]/5) + PTp_to_Nmp;  
+      dNmp[i] = - m_b[i]*Nmp[i] + /* Death */
+                Lsp_to_Nmp + Lmp_to_Nmp + PTp_to_Nmp  - /* Disease */
+                Nmp_pos + Nmp_lost + Nmn_first_fail + Nmn_second_fail + Nmp_first_fail + Nmp_second_fail + Nsn_res + Nsp_res - /* Diagnosis, pre Rx lost, failed Rx, acquired resistance */
+                forc[iz+82]*Nmp[i] + (Nmp[i]/tot_age[i])*(forc[iz+116]/5) - (theta + r + muN_age[i])*Nmp[i];  /* HIV, migration, sm conversion, self-cure, TB death */
 
       /* Smear pos, ds, new */
-      dIsn[i] = - m_b[i]*Isn[i] + S_to_Isn + Lsn_to_Isn + Lmn_to_Isn + theta*Nsn[i] - (r + muI_age[i])*Isn[i] - 
-                kneg*se_I_neg*((dstneg_n*sp_m_neg + (1-dstneg_n))*l_s +(dstneg_n*(1-sp_m_neg)*l_m))*Isn[i] - /* Care */  
-                forc[iz+82]*Isn[i] + (Isn[i]/tot_age[i])*(forc[iz+116]/5) + PTn_to_Isn;  
+      dIsn[i] = - m_b[i]*Isn[i] + /* Death */
+                S_to_Isn + Lsn_to_Isn + Lmn_to_Isn + PTn_to_Isn - /* Disease */
+                Isn_pos + Isn_lost - /* Diagnosis, pre Rx lost */  
+                forc[iz+82]*Isn[i] + (Isn[i]/tot_age[i])*(forc[iz+116]/5) + theta*Nsn[i] - (r + muI_age[i])*Isn[i]; /* HIV, migration, sm conversion, self-cure, TB death */  
       
       /* Smear pos, ds, prev */
-      dIsp[i] = - m_b[i]*Isp[i] + Lsp_to_Isp + Lmp_to_Isp + theta*Nsp[i] - (r + muI_age[i])*Isp[i] -   
-                kneg*se_I_neg*(l_s*(1-e)*tneg_s*(sp_m_neg*dstneg_p + (1-dstneg_p)) + dstneg_p*(1-sp_m_neg)*l_m*tneg_m + l_s*e*(sp_m_neg*dstneg_p + (1-dstneg_p)))*Isp[i] + 
-                kneg*se_I_neg*(l_s*(1-e)*(1-tneg_s)*(dstneg_n*sp_m_neg + (1-dstneg_n)) + (dstneg_n*(1-sp_m_neg)*l_m*(1-tneg_m)))*Isn[i] - /* Care */
-                forc[iz+82]*Isp[i] + (Isp[i]/tot_age[i])*(forc[iz+116]/5) + PTp_to_Isp; 
+      dIsp[i] = - m_b[i]*Isp[i] + /* Death */
+                Lsp_to_Isp + Lmp_to_Isp + PTp_to_Isp - /* Disease */   
+                Isp_pos + Isp_lost + Isn_first_fail + Isn_second_fail + Isp_first_fail + Isp_second_fail - /* Diagnosis, pre Rx lost, failed Rx */
+                forc[iz+82]*Isp[i] + (Isp[i]/tot_age[i])*(forc[iz+116]/5) + theta*Nsp[i] - (r + muI_age[i])*Isp[i]; /* HIV, migration, sm conversion, self-cure, TB death */
 
       /* Smear pos, mdr, new */
-      dImn[i] = - m_b[i]*Imn[i] + S_to_Imn + Lsn_to_Imn + Lmn_to_Imn + theta*Nmn[i] - (r + muI_age[i])*Imn[i] -
-                kneg*se_I_neg*(l_m*dstneg_n*se_m_neg + (1-dstneg_n)*l_s + dstneg_n*(1-se_m_neg)*l_s)*Imn[i] - /* Care */ 
-                forc[iz+82]*Imn[i] + (Imn[i]/tot_age[i])*(forc[iz+116]/5) + PTn_to_Imn;  
-                
+      dImn[i] = - m_b[i]*Imn[i] + /* Death */
+                S_to_Imn + Lsn_to_Imn + Lmn_to_Imn + PTn_to_Imn - /* Disease */
+                Imn_pos + Imn_lost - /* Diagnosis, pre Rx lost, failed Rx */ 
+                forc[iz+82]*Imn[i] + (Imn[i]/tot_age[i])*(forc[iz+116]/5)  + theta*Nmn[i] - (r + muI_age[i])*Imn[i]; /* HIV, migration, sm conversion, self-cure, TB death */  
                 
       /* Smear pos, mdr, prev */
-      dImp[i] = - m_b[i]*Imp[i] + Lsp_to_Imp + Lmp_to_Imp + theta*Nmp[i] - (r + muI_age[i])*Imp[i] -
-                kneg*se_I_neg*(l_m*dstneg_p*tneg_m*se_m_neg + l_s*tneg_s*eff_p*((1-dstneg_p)+dstneg_p*(1-se_m_neg)))*Imp[i] + 
-                kneg*se_I_neg*(se_m_neg*l_m*dstneg_n*(1-tneg_m) + l_s*(1-(tneg_s*eff_n))*((1-dstneg_n)+dstneg_n*(1-se_m_neg)))*Imn[i] + 
-                kneg*se_I_neg*l_s*e*((dstneg_n*sp_m_neg + (1-dstneg_n))*Isn[i]+(dstneg_p*sp_m_neg+ (1-dstneg_p))*Isp[i]) -
-                forc[iz+82]*Imp[i] + (Imp[i]/tot_age[i])*(forc[iz+116]/5) + PTp_to_Imp;  
+      dImp[i] = - m_b[i]*Imp[i] /* Death */
+                + Lsp_to_Imp + Lmp_to_Imp + PTp_to_Imp - /* Disease */
+                Imp_pos + Imp_lost + Imn_first_fail + Imn_second_fail + Imp_first_fail + Imp_second_fail + Isn_res + Isp_res - /* Diagnosis, pre Rx lost, failed Rx, acquired resistance */
+                forc[iz+82]*Imp[i] + (Imp[i]/tot_age[i])*(forc[iz+116]/5) + theta*Nmp[i] - (r + muI_age[i])*Imp[i]; /* HIV, migration, sm conversion, self-cure, TB death */ 
                 
       /* Post PT, ds, new */          
-      dPTn[i] = - m_b[i]*PTn[i] - PTn_to_Lsn - PTn_to_Nsn - PTn_to_Isn - PTn_to_Lmn - PTn_to_Nmn - PTn_to_Imn +
-                health*kneg*(1-sp_I_neg*sp_N_neg)*l_s*tneg_s*Lsn[i] -
-                forc[iz+82]*PTn[i] + (PTn[i]/tot_age[i])*(forc[iz+116]/5);
+      dPTn[i] = - m_b[i]*PTn[i] - /* Death */
+                PTn_to_Lsn - PTn_to_Nsn - PTn_to_Isn - PTn_to_Lmn - PTn_to_Nmn - PTn_to_Imn + /* Infection and disease */
+                false_pos*tneg_s*Lsn[i] - /* Incorrect Rx for latent infected */
+                forc[iz+82]*PTn[i] + (PTn[i]/tot_age[i])*(forc[iz+116]/5); /* HIV, migration */
       
       /* Post PT, ds, prev */ 
-      dPTp[i] = - m_b[i]*PTp[i] - PTp_to_Lsp - PTp_to_Nsp - PTp_to_Isp - PTp_to_Lmp - PTp_to_Nmp - PTp_to_Imp +
-                health*kneg*(1-sp_I_neg*sp_N_neg)*l_s*tneg_s*Lsp[i] -
-                forc[iz+82]*PTp[i] + (PTp[i]/tot_age[i])*(forc[iz+116]/5);
+      dPTp[i] = - m_b[i]*PTp[i] - /* Death */
+                PTp_to_Lsp - PTp_to_Nsp - PTp_to_Isp - PTp_to_Lmp - PTp_to_Nmp - PTp_to_Imp + /* Infection and disease */
+                false_pos*tneg_s*Lsp[i] - /* Incorrect Rx for latent infected */
+                forc[iz+82]*PTp[i] + (PTp[i]/tot_age[i])*(forc[iz+116]/5); /* HIV, migration */
                         
       /* sum up new HIV- cases */           
       TB_cases_neg_age[i] = (v_age[i]*(1-sig_age[i]) + FS*a_age[i]*(1-p)*(1-sig_age[i]))*Lsn[i] + FS*a_age[i]*(1-sig_age[i])*(S[i] + (1-p)*(Lmn[i] + PTn[i])) + /*sneg,sus,new*/
@@ -992,12 +1102,45 @@ void derivs1(int *neq, double *t, double *y, double *ydot, double *yout, int *ip
     
         for (j=0; j<n_HIV; j++){      /* CD4 */
 
+      /* Calculate the disease flows here and use these in the derivatives - intention is to make the model more flexible/easier to understand */
+      
+          double SH_to_LsnH = FS*(1-a_age_H[i][j])*S_H[i][j];                                /* Susceptible to latent DS infection (no disease history) */
+          double SH_to_NsnH = FS*a_age_H[i][j]*(1-sig_H)*S_H[i][j];                          /* Susceptible to primary DS smear negative disease (no disease history) */
+          double SH_to_IsnH = FS*a_age_H[i][j]*sig_H*S_H[i][j];                              /* Susceptible to primary DS smear positive disease (no disease history) */
+          double SH_to_LmnH = FM*(1-a_age_H[i][j])*S_H[i][j];                                /* Susceptible to latent DR infection (no disease history) */
+          double SH_to_NmnH = FM*a_age_H[i][j]*(1-sig_H)*S_H[i][j];                          /* Susceptible to primary DR smear negative disease (no disease history) */
+          double SH_to_ImnH = FM*a_age_H[i][j]*sig_H*S_H[i][j];                              /* Susceptible to primary DR smear positive disease (no disease history) */
+      
+          double LsnH_to_NsnH = (v_age_H[i][j] + FS*a_age_H[i][j]*(1-p_H[j]))*(1-sig_H)*Lsn_H[i][j];   /* Latent DS to smear negative DS disease (no disease history) - reactivation and reinfection */ 
+          double LsnH_to_IsnH = (v_age_H[i][j] + FS*a_age_H[i][j]*(1-p_H[j]))*sig_H*Lsn_H[i][j];       /* Latent DS to smear positive DS disease (no disease history) - reactivation and reinfection */ 
+          double LsnH_to_NmnH = FM*a_age_H[i][j]*(1-p_H[j])*(1-sig_H)*Lsn_H[i][j];                     /* Latent DS to smear negative DR disease (no disease history) - co-infection */ 
+          double LsnH_to_ImnH = FM*a_age_H[i][j]*(1-p_H[j])*sig_H*Lsn_H[i][j];                         /* Latent DS to smear positive DR disease (no disease history) - co-infection */
+          double LsnH_to_LmnH = FM*(1-a_age_H[i][j])*(1-p_H[j])*g*Lsn_H[i][j];                         /* Latent DS to latent DR (no disease history) */
+      
+          double LmnH_to_NmnH = (v_age_H[i][j] + FM*a_age_H[i][j]*(1-p_H[j]))*(1-sig_H)*Lmn_H[i][j];   /* Latent DR to smear negative DR disease (no disease history) - reactivation and reinfection */ 
+          double LmnH_to_ImnH = (v_age_H[i][j] + FM*a_age_H[i][j]*(1-p_H[j]))*sig_H*Lmn_H[i][j];       /* Latent DR to smear positive DR disease (no disease history) - reactivation and reinfection */ 
+          double LmnH_to_NsnH = FS*a_age_H[i][j]*(1-sig_H)*(1-p_H[j])*Lmn_H[i][j];                     /* Latent DR to smear negative DS disease (no disease history) - co-infection */
+          double LmnH_to_IsnH = FS*a_age_H[i][j]*sig_H*(1-p_H[j])*Lmn_H[i][j];                         /* Latent DR to smear positive DS disease (no disease history) - co-infection */
+          double LmnH_to_LsnH = FS*(1-a_age_H[i][j])*(1-p_H[j])*(1-g)*Lmn_H[i][j];                     /* Latent DR to latent DS (no disease history) */
+
+          double LspH_to_NspH = (v_age_H[i][j] + FS*a_age_H[i][j]*(1-p_H[j]))*(1-sig_H)*Lsp_H[i][j];   /* Latent DS to smear negative DS disease (prior Rx) - reactivation and reinfection */ 
+          double LspH_to_IspH = (v_age_H[i][j] + FS*a_age_H[i][j]*(1-p_H[j]))*sig_H*Lsp_H[i][j];       /* Latent DS to smear positive DS disease (prior Rx) - reactivation and reinfection */     
+          double LspH_to_NmpH = FM*a_age_H[i][j]*(1-p_H[j])*(1-sig_H)*Lsp_H[i][j];                     /* Latent DS to smear negative DR disease (prior_rx) - reactivation and reinfection */ 
+          double LspH_to_ImpH = FM*a_age_H[i][j]*(1-p_H[j])*sig_H*Lsp_H[i][j];                         /* Latent DS to smear positive DR disease (prior_Rx) - reactivation and reinfection */
+          double LspH_to_LmpH = FM*(1-a_age_H[i][j])*(1-p_H[j])*g*Lsp_H[i][j];                         /* Latent DS to latent DR (prior Rx) */
+      
+          double LmpH_to_NmpH = (v_age_H[i][j] + FM*a_age_H[i][j]*(1-p_H[j]))*(1-sig_H)*Lmp_H[i][j];   /* Latent DR to smear negative DR disease (prior Rx) - reactivation and reinfection */ 
+          double LmpH_to_ImpH = (v_age_H[i][j] + FM*a_age_H[i][j]*(1-p_H[j]))*sig_H*Lmp_H[i][j];       /* Latent DR to smear positive DR disease (prior Rx) - reactivation and reinfection */     
+          double LmpH_to_NspH = FS*a_age_H[i][j]*(1-p_H[j])*(1-sig_H)*Lmp_H[i][j];                     /* Latent DR to smear negative DS disease (prior_rx) - reactivation and reinfection */ 
+          double LmpH_to_IspH = FS*a_age_H[i][j]*(1-p_H[j])*sig_H*Lmp_H[i][j];                         /* Latent DR to smear positive DS disease (prior_Rx) - reactivation and reinfection */
+          double LmpH_to_LspH = FS*(1-a_age_H[i][j])*(1-p_H[j])*(1-g)*Lmp_H[i][j];                     /* Latent DR to latent DS (prior Rx) */
+
           double PTnH_to_LsnH = FS*(1-a_age_H[i][j])*(1-p_H[j])*PTn_H[i][j];            /* Post PT to latent DS (no disease history) */
           double PTnH_to_NsnH = FS*a_age_H[i][j]*(1-p_H[j])*(1-sig_H)*PTn_H[i][j];      /* Post PT to smear negative DS disease (no disease history) */
           double PTnH_to_IsnH = FS*a_age_H[i][j]*(1-p_H[j])*sig_H*PTn_H[i][j];          /* Post PT to smear positive DS disease (no disease history) */
           double PTnH_to_LmnH = FM*(1-a_age_H[i][j])*(1-p_H[j])*g*PTn_H[i][j];          /* Post PT to latent DR (no disease history) */
           double PTnH_to_NmnH = FM*a_age_H[i][j]*(1-p_H[j])*(1-sig_H)*PTn_H[i][j];      /* Post PT to smear negative DR disease (no disease history) */
-          double PTnH_to_ImnH = FM*a_age_H[i][j]*(1-p_H[j])*sig_H*PTn_H[i][j];               /* Post PT to smear positive DR disease (no disease history) */
+          double PTnH_to_ImnH = FM*a_age_H[i][j]*(1-p_H[j])*sig_H*PTn_H[i][j];          /* Post PT to smear positive DR disease (no disease history) */
       
           double PTpH_to_LspH = FS*(1-a_age_H[i][j])*(1-p_H[j])*PTp_H[i][j];            /* Post PT to latent DS (prior Rx) */
           double PTpH_to_NspH = FS*a_age_H[i][j]*(1-p_H[j])*(1-sig_H)*PTp_H[i][j];      /* Post PT to smear negative DS disease (prior Rx) */
@@ -1006,131 +1149,206 @@ void derivs1(int *neq, double *t, double *y, double *ydot, double *yout, int *ip
           double PTpH_to_NmpH = FM*a_age_H[i][j]*(1-p_H[j])*(1-sig_H)*PTp_H[i][j];      /* Post PT to smear negative DR disease (prior Rx) */
           double PTpH_to_ImpH = FM*a_age_H[i][j]*(1-p_H[j])*sig_H*PTp_H[i][j];          /* Post PT to smear positive DR disease (prior Rx) */
 
-          dS_H[i][j] = - m_b[i]*S_H[i][j] - 
-                      (FS + FM)*S_H[i][j] +
-                      forc[iz+82]*H_CD4[j][i]*S[i] - H_prog[j+1][i]*S_H[i][j] + H_prog[j][i]*S_H[i][j-1] - 
-                      up_H_mort[j][i]*S_H[i][j] - ART_prop[i][j]*S_H[i][j] + (S_H[i][j]/tot_age[i])*(forc[iz+116]/5);
-
-          dLsn_H[i][j] = - m_b[i]*Lsn_H[i][j] +
-                        FS*((1-a_age_H[i][j])*S_H[i][j] + (1-a_age_H[i][j])*(1-p_H[j])*(1-g)*Lmn_H[i][j]) -
-                        (v_age_H[i][j] + FS*a_age_H[i][j]*(1-p_H[j]) + FM*a_age_H[i][j]*(1-p_H[j]) + FM*(1-a_age_H[i][j])*(1-p_H[j])*g)*Lsn_H[i][j] +
-                        r_H*(Isn_H[i][j] + Nsn_H[i][j]) +
-                        forc[iz+82]*H_CD4[j][i]*Lsn[i] - H_prog[j+1][i]*Lsn_H[i][j] + H_prog[j][i]*Lsn_H[i][j-1] - 
-                        up_H_mort[j][i]*Lsn_H[i][j] - ART_prop[i][j]*Lsn_H[i][j] + (Lsn_H[i][j]/tot_age[i])*(forc[iz+116]/5)-
-                        health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tpos_s*Lsn_H[i][j] + PTnH_to_LsnH;
-
-          dLsp_H[i][j] = - m_b[i]*Lsp_H[i][j] +
-                        FS*(1-a_age_H[i][j])*(1-p_H[j])*(1-g)*Lmp_H[i][j] -
-                        (v_age_H[i][j] + FS*a_age_H[i][j]*(1-p_H[j]) + FM*a_age_H[i][j]*(1-p_H[j]) + FM*(1-a_age_H[i][j])*(1-p_H[j])*g)*Lsp_H[i][j] +
-                        r_H*(Isp_H[i][j]+Nsp_H[i][j]) +
-                        kpos*(l_s*(1-e)*tpos_s*((dstpos_p*sp_m_pos)+(1-dstpos_p)) + l_m*tpos_m*dstpos_p*(1-sp_m_pos))*(se_I_pos*Isp_H[i][j] + se_N_pos*rel_d*Nsp_H[i][j]) + 
-                        kpos*(l_s*(1-e)*tpos_s*((dstpos_n*sp_m_pos)+(1-dstpos_n)) + l_m*tpos_m*dstpos_n*(1-sp_m_pos))*(se_I_pos*Isn_H[i][j] + se_N_pos*rel_d*Nsn_H[i][j]) +
-                        forc[iz+82]*H_CD4[j][i]*Lsp[i] - H_prog[j+1][i]*Lsp_H[i][j] + H_prog[j][i]*Lsp_H[i][j-1] - 
-                        up_H_mort[j][i]*Lsp_H[i][j] - ART_prop[i][j]*Lsp_H[i][j] + (Lsp_H[i][j]/tot_age[i])*(forc[iz+116]/5)-
-                        health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tpos_s*Lsp_H[i][j] + PTpH_to_LspH;
-
-          dLmn_H[i][j] = - m_b[i]*Lmn_H[i][j] +
-                        FM*((1-a_age_H[i][j])*S_H[i][j] + (1-a_age_H[i][j])*(1-p_H[j])*g*Lsn_H[i][j]) -
-                        (v_age_H[i][j] + FM*a_age_H[i][j]*(1-p_H[j]) + FS*a_age_H[i][j]*(1-p_H[j]) + FS*(1-a_age_H[i][j])*(1-p_H[j])*(1-g))*Lmn_H[i][j] +
-                        r_H*(Imn_H[i][j]+Nmn_H[i][j]) +
-                        forc[iz+82]*H_CD4[j][i]*Lmn[i] - H_prog[j+1][i]*Lmn_H[i][j] + H_prog[j][i]*Lmn_H[i][j-1] - 
-                        up_H_mort[j][i]*Lmn_H[i][j] - ART_prop[i][j]*Lmn_H[i][j] + (Lmn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTnH_to_LmnH;
-                     
-          dLmp_H[i][j] = - m_b[i]*Lmp_H[i][j] + 
-                        FM*(1-a_age_H[i][j])*(1-p_H[j])*g*Lsp_H[i][j] -
-                        (v_age_H[i][j] + FM*a_age_H[i][j]*(1-p_H[j]) + FS*a_age_H[i][j]*(1-p_H[j]) + FS*(1-a_age_H[i][j])*(1-p_H[j])*(1-g))*Lmp_H[i][j] +
-                        r_H*(Imp_H[i][j]+Nmp_H[i][j]) +
-                        kpos*(dstpos_p*se_m_pos*l_m*tpos_m + l_s*tpos_s*eff_p*((1-dstpos_p)+dstpos_p*(1-se_m_pos)))*(se_I_pos*Imp_H[i][j] + se_N_pos*rel_d*Nmp_H[i][j]) +
-                        kpos*(dstpos_n*se_m_pos*l_m*tpos_m + l_s*tpos_s*eff_n*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*(se_I_pos*Imn_H[i][j] + se_N_pos*rel_d*Nmn_H[i][j]) + 
-                        forc[iz+82]*H_CD4[j][i]*Lmp[i] - H_prog[j+1][i]*Lmp_H[i][j] + H_prog[j][i]*Lmp_H[i][j-1] - 
-                        up_H_mort[j][i]*Lmp_H[i][j] - ART_prop[i][j]*Lmp_H[i][j] + (Lmp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTpH_to_LmpH;
-
-          dNsn_H[i][j] = - m_b[i]*Nsn_H[i][j] +
-                        (v_age_H[i][j]*(1-sig_H) + FS*a_age_H[i][j]*(1-p_H[j])*(1-sig_H))*Lsn_H[i][j] +
-                        FS*a_age_H[i][j]*(1-sig_H)*(S_H[i][j] + (1-p_H[j])*Lmn_H[i][j]) -
-                        (theta_H + r_H + muN_H)*Nsn_H[i][j] -
-                        kpos*se_N_pos*rel_d*(l_s*(dstpos_n*sp_m_pos + (1-dstpos_n)) + dstpos_n*(1-sp_m_pos)*l_m)*Nsn_H[i][j] + 
-                        forc[iz+82]*H_CD4[j][i]*Nsn[i] - H_prog[j+1][i]*Nsn_H[i][j] + H_prog[j][i]*Nsn_H[i][j-1] - 
-                        up_H_mort[j][i]*Nsn_H[i][j] - ART_prop[i][j]*Nsn_H[i][j] + (Nsn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTnH_to_NsnH;
-                                                
-          dNsp_H[i][j] = - m_b[i]*Nsp_H[i][j] + 
-                        (v_age_H[i][j]*(1-sig_H) + FS*a_age_H[i][j]*(1-p_H[j])*(1-sig_H))*Lsp_H[i][j] +
-                        FS*a_age_H[i][j]*(1-sig_H)*(1-p_H[j])*Lmp_H[i][j] -
-                        (theta_H + r_H + muN_H)*Nsp_H[i][j] -
-                        kpos*rel_d*se_N_pos*((1-e)*tpos_s*l_s*(sp_m_pos*dstpos_p + (1-dstpos_p)) + dstpos_p*(1-sp_m_pos)*l_m*tpos_m + l_s*e*(sp_m_pos*dstpos_p +(1-dstpos_p)))*Nsp_H[i][j] + 
-                        kpos*rel_d*se_N_pos*(l_s*(1-e)*(1-tpos_s)*(dstpos_n*sp_m_pos + (1-dstpos_n)) + dstpos_n*(1-sp_m_pos)*(1-tpos_m)*l_m)*Nsn_H[i][j] +                       
-                        forc[iz+82]*H_CD4[j][i]*Nsp[i] - H_prog[j+1][i]*Nsp_H[i][j] + H_prog[j][i]*Nsp_H[i][j-1] - 
-                        up_H_mort[j][i]*Nsp_H[i][j] - ART_prop[i][j]*Nsp_H[i][j] + (Nsp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTpH_to_NspH;
-
-          dNmn_H[i][j] = - m_b[i]*Nmn_H[i][j] +
-                        (v_age_H[i][j]*(1-sig_H) + FM*a_age_H[i][j]*(1-p_H[j])*(1-sig_H))*Lmn_H[i][j] +
-                        FM*a_age_H[i][j]*(1-sig_H)*(S_H[i][j] + (1-p_H[j])*Lsn_H[i][j]) -
-                        (theta_H + r_H + muN_H)*Nmn_H[i][j] -
-                        kpos*rel_d*se_N_pos*(l_m*dstpos_n*se_m_pos + l_s*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*Nmn_H[i][j] +
-                        forc[iz+82]*H_CD4[j][i]*Nmn[i] - H_prog[j+1][i]*Nmn_H[i][j] + H_prog[j][i]*Nmn_H[i][j-1] - 
-                        up_H_mort[j][i]*Nmn_H[i][j] - ART_prop[i][j]*Nmn_H[i][j] + (Nmn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTnH_to_NmnH;
-                       
-          dNmp_H[i][j] = - m_b[i]*Nmp_H[i][j] +
-                        (v_age_H[i][j]*(1-sig_H) + FM*a_age_H[i][j]*(1-p_H[j])*(1-sig_H))*Lmp_H[i][j] +
-                        FM*a_age_H[i][j]*(1-sig_H)*(1-p_H[j])*Lsp_H[i][j] -
-                        (theta_H + r_H + muN_H)*Nmp_H[i][j] -
-                        kpos*rel_d*se_N_pos*(dstpos_p*se_m_pos*l_m*tpos_m + l_s*tpos_s*eff_p*((1-dstpos_p)+dstpos_p*(1-se_m_pos)))*Nmp_H[i][j] + 
-                        kpos*l_s*rel_d*e*se_N_pos*((dstpos_n*sp_m_pos+(1-dstpos_n))*Nsn_H[i][j]+(dstpos_p*sp_m_pos+(1-dstpos_p))*Nsp_H[i][j]) + 
-                        kpos*se_N_pos*rel_d*(dstpos_n*l_m*se_m_pos*(1-tpos_m) + l_s*(1-(tpos_s*eff_n))*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*Nmn_H[i][j] +
-                        forc[iz+82]*H_CD4[j][i]*Nmp[i] - H_prog[j+1][i]*Nmp_H[i][j] + H_prog[j][i]*Nmp_H[i][j-1] - 
-                        up_H_mort[j][i]*Nmp_H[i][j] - ART_prop[i][j]*Nmp_H[i][j] + (Nmp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTpH_to_NmpH;
-
-          dIsn_H[i][j] = - m_b[i]*Isn_H[i][j] +
-                        (v_age_H[i][j]*sig_H + FS*a_age_H[i][j]*sig_H*(1-p_H[j]))*Lsn_H[i][j] +
-                        FS*a_age_H[i][j]*sig_H*S_H[i][j] +
-                        FS*a_age_H[i][j]*(1-p_H[j])*sig_H*Lmn_H[i][j] +
-                        theta_H*Nsn_H[i][j] -
-                        (r_H + muI_H)*Isn_H[i][j] -
-                        kpos*se_I_pos*((dstpos_n*sp_m_pos + (1-dstpos_n))*l_s +(dstpos_n*(1-sp_m_pos)*l_m))*Isn_H[i][j] +
-                        forc[iz+82]*H_CD4[j][i]*Isn[i] - H_prog[j+1][i]*Isn_H[i][j] + H_prog[j][i]*Isn_H[i][j-1] - 
-                        up_H_mort[j][i]*Isn_H[i][j] - ART_prop[i][j]*Isn_H[i][j] + (Isn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTnH_to_IsnH;
-
-          dIsp_H[i][j] = - m_b[i]*Isp_H[i][j] +
-                        (v_age_H[i][j]*sig_H + FS*a_age_H[i][j]*sig_H*(1-p_H[j]))*Lsp_H[i][j] +
-                        FS*a_age_H[i][j]*sig_H*(1-p_H[j])*Lmp_H[i][j] +
-                        theta_H*Nsp_H[i][j] +
-                        kpos*se_I_pos*(l_s*(1-e)*(1-tpos_s)*(dstpos_n*sp_m_pos + (1-dstpos_n)) + (dstpos_n*(1-sp_m_pos)*l_m*(1-tpos_m)))*Isn_H[i][j] - 
-                        (r_H + muI_H)*Isp_H[i][j] -
-                        kpos*se_I_pos*(l_s*(1-e)*tpos_s*(sp_m_pos*dstpos_p + (1-dstpos_p)) + dstpos_p*(1-sp_m_pos)*l_m*tpos_m + l_s*e*(sp_m_pos*dstpos_p + (1-dstpos_p)))*Isp_H[i][j] +
-                        forc[iz+82]*H_CD4[j][i]*Isp[i] - H_prog[j+1][i]*Isp_H[i][j] + H_prog[j][i]*Isp_H[i][j-1] - 
-                        up_H_mort[j][i]*Isp_H[i][j] - ART_prop[i][j]*Isp_H[i][j] + (Isp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTpH_to_IspH;       
-     
-          dImn_H[i][j] = - m_b[i]*Imn_H[i][j] +
-                        (v_age_H[i][j]*sig_H + FM*a_age_H[i][j]*sig_H*(1-p_H[j]))*Lmn_H[i][j] +
-                        FM*a_age_H[i][j]*sig_H*S_H[i][j] +
-                        FM*a_age_H[i][j]*(1-p_H[j])*sig_H*Lsn_H[i][j] +
-                        theta_H*Nmn_H[i][j] -
-                        kpos*se_I_pos*(l_m*dstpos_n*se_m_pos + (1-dstpos_n)*l_s + dstpos_n*(1-se_m_pos)*l_s)*Imn_H[i][j] -
-                        (r_H + muI_H)*Imn_H[i][j] +
-                        forc[iz+82]*H_CD4[j][i]*Imn[i] - H_prog[j+1][i]*Imn_H[i][j] + H_prog[j][i]*Imn_H[i][j-1] - 
-                        up_H_mort[j][i]*Imn_H[i][j] - ART_prop[i][j]*Imn_H[i][j] + (Imn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTnH_to_ImnH;
-
-          dImp_H[i][j] = - m_b[i]*Imp_H[i][j] +
-                        (v_age_H[i][j]*sig_H + FM*a_age_H[i][j]*sig_H*(1-p_H[j]))*Lmp_H[i][j] +
-                        FM*a_age_H[i][j]*sig_H*(1-p_H[j])*Lsp_H[i][j] +
-                        theta_H*Nmp_H[i][j] + 
-                        kpos*se_I_pos*(se_m_pos*l_m*dstpos_n*(1-tpos_m) + l_s*(1-(tpos_s*eff_n))*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*Imn_H[i][j] + 
-                        kpos*se_I_pos*l_s*e*((dstpos_n*sp_m_pos + (1-dstpos_n))*Isn_H[i][j]+(dstpos_p*sp_m_pos+ (1-dstpos_p))*Isp_H[i][j]) -
-                        (r_H + muI_H)*Imp_H[i][j] -
-                        kpos*se_I_pos*(l_m*dstpos_p*tpos_m*se_m_pos + l_s*tpos_s*eff_p*((1-dstpos_p)+dstpos_p*(1-se_m_pos)))*Imp_H[i][j]+
-                        forc[iz+82]*H_CD4[j][i]*Imp[i] - H_prog[j+1][i]*Imp_H[i][j] + H_prog[j][i]*Imp_H[i][j-1] - 
-                        up_H_mort[j][i]*Imp_H[i][j] - ART_prop[i][j]*Imp_H[i][j] + (Imp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + PTpH_to_ImpH;       
-                                                      
-          dPTn_H[i][j] = -m_b[i]*PTn_H[i][j] - PTnH_to_LsnH - PTnH_to_NsnH - PTnH_to_IsnH - PTnH_to_LmnH - PTnH_to_NmnH - PTnH_to_ImnH +
-                         health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tpos_s*Lsn_H[i][j] +
-                         forc[iz+82]*H_CD4[j][i]*PTn[i] - H_prog[j+1][i]*PTn_H[i][j] + H_prog[j][i]*PTn_H[i][j-1] - 
-                         up_H_mort[j][i]*PTn_H[i][j] - ART_prop[i][j]*PTn_H[i][j] + (PTn_H[i][j]/tot_age[i])*(forc[iz+116]/5);
+          /* Calculate "care" flows here and use these in the derivatives */
           
-          dPTp_H[i][j] = - m_b[i]*PTp_H[i][j] - PTpH_to_LspH - PTpH_to_NspH - PTpH_to_IspH - PTpH_to_LmpH - PTpH_to_NmpH - PTpH_to_ImpH +
-                         health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tpos_s*Lsp_H[i][j] +
-                         forc[iz+82]*H_CD4[j][i]*PTp[i] - H_prog[j+1][i]*PTp_H[i][j] + H_prog[j][i]*PTp_H[i][j-1] - 
-                         up_H_mort[j][i]*PTp_H[i][j] - ART_prop[i][j]*PTp_H[i][j] + (PTp_H[i][j]/tot_age[i])*(forc[iz+116]/5);
+          /* TB notification may trigger HIV test and ART initiation */
+          /* Some proportion (HIV_test*HIV_link) of those notified (i.e. started on Rx) move to corresponding ART compartment */
+          double HIV_ART = HIV_test*ART_link;
+
+          double false_pos = health*kpos*(1-sp_I_pos*sp_N_pos)*l_s;   /* Susceptible, latently infected and post-PT are false pos notif at this rate (includes link to Rx). */
+                                                                      /* This only has any effect in those latently infected with drug sus strains. tpos_s complete Rx and move to PTn/PTp */
+          /* sm-, drug sus, no Rx history */    
+          double NsnH_pos = kpos*se_N_pos*rel_d*Nsn_H[i][j];        /* TB positive - move all out of Nsn_H */
+          double NsnH_dst = NsnH_pos*dstpos_n;                      /* Get DST */
+          double NsnH_dst_fpos = NsnH_dst*(1-sp_m_pos);             /* False pos on DST */
+          double NsnH_first = l_s*(NsnH_pos - NsnH_dst_fpos);       /* Start first line Rx (correct) */     
+          double NsnH_second = l_m*(NsnH_dst_fpos);                 /* Start second line treatment (incorrect) */
+          double NsnH_lost = NsnH_pos - NsnH_first - NsnH_second;   /* Positive cases lost to follow up  - go to Nsn_H */ 
+          double NsnH_res = NsnH_first*e;                           /* Develop resistance - split between Nmp_H and Nmp_A */
+          double NsnH_first_success = (NsnH_first-NsnH_res)*tpos_s; /* First line success - split between Lsp_H and Lsp_A */
+          double NsnH_first_fail = (NsnH_first-NsnH_res)*(1-tpos_s);/* First line failure - split between Nsp_H and Nsp_A */
+          double NsnH_second_success = NsnH_second*tpos_m;          /* Second line success - split between Lsp_H and Lsp_A */
+          double NsnH_second_fail = NsnH_second*(1-tpos_m);         /* Second line failure - split between Nsp_H and Nsp_A */
+
+          /* sm-, drug sus, previous Rx history */    
+          double NspH_pos = kpos*se_N_pos*rel_d*Nsp_H[i][j];        /* TB positive - move all out of Nsp_H */
+          double NspH_dst = NspH_pos*dstpos_p;                      /* Get DST */
+          double NspH_dst_fpos = NspH_dst*(1-sp_m_pos);             /* False pos on DST */
+          double NspH_first = l_s*(NspH_pos - NspH_dst_fpos);       /* Start first line Rx (correct) */     
+          double NspH_second = l_m*(NspH_dst_fpos);                 /* Start second line treatment (incorrect) */
+          double NspH_lost = NspH_pos - NspH_first - NspH_second;   /* Positive cases lost to follow up  - go to Nsp_H */ 
+          double NspH_res = NspH_first*e;                           /* Develop resistance - split between Nmp_H and Nmp_A */
+          double NspH_first_success = (NspH_first-NspH_res)*tpos_s; /* First line success - split between Lsp_H and Lsp_A */
+          double NspH_first_fail = (NspH_first-NspH_res)*(1-tpos_s);/* First line failure - split between Nsp_H and Nsp_A */
+          double NspH_second_success = NspH_second*tpos_m;          /* Second line success - split between Lsp_H and Lsp_A */
+          double NspH_second_fail = NspH_second*(1-tpos_m);         /* Second line failure - split between Nsp_H and Nsp_A */
+
+          /* sm+, drug sus, no Rx history */    
+          double IsnH_pos = kpos*se_I_pos*Isn_H[i][j];              /* TB positive - move all out of Isn_H */
+          double IsnH_dst = IsnH_pos*dstpos_n;                      /* Get DST */
+          double IsnH_dst_fpos = IsnH_dst*(1-sp_m_pos);             /* False pos on DST */
+          double IsnH_first = l_s*(IsnH_pos - IsnH_dst_fpos);       /* Start first line Rx (correct) */     
+          double IsnH_second = l_m*(IsnH_dst_fpos);                 /* Start second line treatment (incorrect) */
+          double IsnH_lost = IsnH_pos - IsnH_first - IsnH_second;   /* Positive cases lost to follow up  - go to Isn_H */ 
+          double IsnH_res = IsnH_first*e;                           /* Develop resistance - split between Imp_H and Imp_A */
+          double IsnH_first_success = (IsnH_first-IsnH_res)*tpos_s; /* First line success - split between Lsp_H and Lsp_A */
+          double IsnH_first_fail = (IsnH_first-IsnH_res)*(1-tpos_s);/* First line failure - split between Isp_H and Isp_A */
+          double IsnH_second_success = IsnH_second*tpos_m;          /* Second line success - split between Lsp_H and Lsp_A */
+          double IsnH_second_fail = IsnH_second*(1-tpos_m);         /* Second line failure - split between Isp_H and Isp_A */
+
+          /* sm+, drug sus, previous Rx history */    
+          double IspH_pos = kpos*se_I_pos*Isp_H[i][j];              /* TB positive - move all out of Isp_H */
+          double IspH_dst = IspH_pos*dstpos_p;                      /* Get DST */
+          double IspH_dst_fpos = IspH_dst*(1-sp_m_pos);             /* False pos on DST */
+          double IspH_first = l_s*(IspH_pos - IspH_dst_fpos);       /* Start first line Rx (correct) */     
+          double IspH_second = l_m*(IspH_dst_fpos);                 /* Start second line Rx (incorrect) */
+          double IspH_lost = IspH_pos - IspH_first - IspH_second;   /* Positive cases lost to follow up  - go to Isp_H */ 
+          double IspH_res = IspH_first*e;                           /* Develop resistance - split between Imp_H and Imp_A */
+          double IspH_first_success = (IspH_first-IspH_res)*tpos_s; /* First line success - split between Lsp_H and Lsp_A */
+          double IspH_first_fail = (IspH_first-IspH_res)*(1-tpos_s);/* First line failure - split between Isp_H and Isp_A */
+          double IspH_second_success = IspH_second*tpos_m;          /* Second line success - split between Lsp_H and Lsp_A*/
+          double IspH_second_fail = IspH_second*(1-tpos_m);         /* Second line failure - split between Isp_H and Isp_A */
+
+          /* sm-, MDR, no Rx history */
+          double NmnH_pos = kpos*se_N_pos*rel_d*Nmn_H[i][j];        /* TB positive - move all out of Nmn_H */
+          double NmnH_dst = NmnH_pos*dstpos_n;                      /* Get DST */
+          double NmnH_dst_pos = NmnH_dst*se_m_pos;                  /* True pos on DST */
+          double NmnH_first = l_s*(NmnH_pos - NmnH_dst_pos);        /* Start first line Rx (incorrect) */  
+          double NmnH_second = l_m*NmnH_dst_pos;                    /* Start second line Rx (correct) */
+          double NmnH_lost = NmnH_pos - NmnH_first - NmnH_second;   /* Positive cases lost to follow up - go to Nmn_H */
+          double NmnH_first_success = NmnH_first*tpos_s*eff_n;      /* First line success - split between Lmp_H and Lmp_A */
+          double NmnH_first_fail = NmnH_first - NmnH_first_success; /* First line failure - split between Nmp_H and Nmp_A */
+          double NmnH_second_success = NmnH_second*tpos_m;          /* Second line success - split between Lmp_H and Lmp_A */
+          double NmnH_second_fail = NmnH_second*(1-tpos_m);         /* Second line failure - split between Nmp_H and Nmp_A */
+
+          /* sm-, MDR, previous Rx history */
+          double NmpH_pos = kpos*se_N_pos*rel_d*Nmp_H[i][j];        /* TB positive - move all out of Nmp */
+          double NmpH_dst = NmpH_pos*dstpos_p;                      /* Get DST */
+          double NmpH_dst_pos = NmpH_dst*se_m_pos;                  /* True pos on DST */
+          double NmpH_first = l_s*(NmpH_pos - NmpH_dst_pos);        /* Start first line Rx (incorrect) */  
+          double NmpH_second = l_m*NmpH_dst_pos;                    /* Start second line Rx (correct) */
+          double NmpH_lost = NmpH_pos - NmpH_first - NmpH_second;   /* Positive cases lost to follow up - go to Nmp */
+          double NmpH_first_success = NmpH_first*tpos_s*eff_p;      /* First line success - split between Lmp_H and Lmp_A */
+          double NmpH_first_fail = NmpH_first - NmpH_first_success; /* First line failure - split between Nmp_H and Nmp_A */
+          double NmpH_second_success = NmpH_second*tpos_m;          /* Second line success - split between Lmp_H and Lmp_A */
+          double NmpH_second_fail = NmpH_second*(1-tpos_m);         /* Second line failure - split between Nmp_H and Nmp_A */
+
+          /* sm+, MDR, no Rx history */
+          double ImnH_pos = kpos*se_I_pos*Imn_H[i][j];              /* TB positive - move all out of Imn_A */
+          double ImnH_dst = ImnH_pos*dstpos_n;                      /* Get DST */
+          double ImnH_dst_pos = ImnH_dst*se_m_pos;                  /* True pos on DST */
+          double ImnH_first = l_s*(ImnH_pos - ImnH_dst_pos);        /* Start first line Rx (incorrect) */  
+          double ImnH_second = l_m*ImnH_dst_pos;                    /* Start second line Rx (correct) */
+          double ImnH_lost = ImnH_pos - ImnH_first - ImnH_second;   /* Positive cases lost to follow up - go to Imn_A */
+          double ImnH_first_success = ImnH_first*tpos_s*eff_n;      /* First line success - split between Lmp_H and Lmp_A */
+          double ImnH_first_fail = ImnH_first - ImnH_first_success; /* First line failure - split between Imp_H and Imp_A */
+          double ImnH_second_success = ImnH_second*tpos_m;          /* Second line success - split between Lmp_H and Lmp_A */
+          double ImnH_second_fail = ImnH_second*(1-tpos_m);         /* Second line failure - split between Imp_H and Imp_A */
+
+          /* sm+, MDR, previous Rx history */
+          double ImpH_pos = kpos*se_I_pos*Imp_H[i][j];              /* TB positive - move all out of Imp_A */
+          double ImpH_dst = ImpH_pos*dstpos_p;                      /* Get DST */
+          double ImpH_dst_pos = ImpH_dst*se_m_pos;                  /* True pos on DST */
+          double ImpH_first = l_s*(ImpH_pos - ImpH_dst_pos);        /* Start first line Rx (incorrect) */  
+          double ImpH_second = l_m*ImpH_dst_pos;                    /* Start second line Rx (correct) */
+          double ImpH_lost = ImpH_pos - ImpH_first - ImpH_second;   /* Positive cases lost to follow up - go to Imp */
+          double ImpH_first_success = ImpH_first*tpos_s*eff_p;      /* First line success - split between Lmp_H and Lmp_A */
+          double ImpH_first_fail = ImpH_first - ImpH_first_success; /* First line failure - split between Imp_H and Imp_A */
+          double ImpH_second_success = ImpH_second*tpos_m;          /* Second line success - split between Lmp_H and Lmp_A */
+          double ImpH_second_fail = ImpH_second*(1-tpos_m);         /* Second line failure - split between Imp_H and Imp_A */
+
+          dS_H[i][j] = - m_b[i]*S_H[i][j] - /* Death */
+                      (FS + FM)*S_H[i][j] + /* Infection */
+                      forc[iz+82]*H_CD4[j][i]*S[i] - H_prog[j+1][i]*S_H[i][j] + H_prog[j][i]*S_H[i][j-1] - /* HIV incidence and progression */
+                      up_H_mort[j][i]*S_H[i][j] - ART_prop[i][j]*S_H[i][j] + (S_H[i][j]/tot_age[i])*(forc[iz+116]/5) - /* HIV death, ART inititation, migration */
+                      false_pos*S_H[i][j]*HIV_ART; /* Link to ART for false positive TB cases */
+
+          dLsn_H[i][j] = - m_b[i]*Lsn_H[i][j] + /* Death */
+                        SH_to_LsnH + LmnH_to_LsnH + PTnH_to_LsnH - LsnH_to_LmnH - LsnH_to_NsnH - LsnH_to_IsnH - LsnH_to_NmnH - LsnH_to_ImnH + /* Infection and disease */
+                        forc[iz+82]*H_CD4[j][i]*Lsn[i] - H_prog[j+1][i]*Lsn_H[i][j] + H_prog[j][i]*Lsn_H[i][j-1] - /* HIV incidence and progression */ 
+                        up_H_mort[j][i]*Lsn_H[i][j] - ART_prop[i][j]*Lsn_H[i][j] + (Lsn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + r_H*(Isn_H[i][j] + Nsn_H[i][j]) - /* HIV death, ART inititation, migration, self_cure */
+                        false_pos*Lsn_H[i][j]*(HIV_ART + (1-HIV_ART)*tpos_s); /* False positive for TB, ART and Rx */    
+
+          dLsp_H[i][j] = - m_b[i]*Lsp_H[i][j] + /*Death */
+                        LmpH_to_LspH + PTpH_to_LspH - LspH_to_LmpH - LspH_to_NspH - LspH_to_IspH  - LspH_to_NmpH - LspH_to_ImpH + /* Infection and disease */ 
+                        (1-HIV_ART)*(NsnH_first_success + NsnH_second_success + NspH_first_success + NspH_second_success + IsnH_first_success + IsnH_second_success + IspH_first_success + IspH_second_success) + /* Rx */          
+                        forc[iz+82]*H_CD4[j][i]*Lsp[i] - H_prog[j+1][i]*Lsp_H[i][j] + H_prog[j][i]*Lsp_H[i][j-1] - /* HIV incidence and progression */
+                        up_H_mort[j][i]*Lsp_H[i][j] - ART_prop[i][j]*Lsp_H[i][j] + (Lsp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + r_H*(Isp_H[i][j]+Nsp_H[i][j]) - /* HIV death, ART inititation, migration, self-cure */
+                        false_pos*Lsp_H[i][j]*(HIV_ART + (1-HIV_ART)*tpos_s); /* False positive for TB, ART and Rx */
+
+          dLmn_H[i][j] = - m_b[i]*Lmn_H[i][j] + /* Death */
+                        SH_to_LmnH + LsnH_to_LmnH + PTnH_to_LmnH - LmnH_to_LsnH - LmnH_to_NsnH - LmnH_to_IsnH - LmnH_to_NmnH - LmnH_to_ImnH - /* Infection and disease */ 
+                        forc[iz+82]*H_CD4[j][i]*Lmn[i] - H_prog[j+1][i]*Lmn_H[i][j] + H_prog[j][i]*Lmn_H[i][j-1] - /* HIV incidence and progression */
+                        up_H_mort[j][i]*Lmn_H[i][j] - ART_prop[i][j]*Lmn_H[i][j] + (Lmn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + r_H*(Imn_H[i][j]+Nmn_H[i][j]) - /* HIV death, ART inititation, migration, self-cure */
+                        false_pos*Lmn_H[i][j]*HIV_ART; /* Link to ART for false positive TB cases */
+     
+          dLmp_H[i][j] = - m_b[i]*Lmp_H[i][j] + /* Death */
+                        LspH_to_LmpH + PTpH_to_LmpH - LmpH_to_LspH - LmpH_to_NspH - LmpH_to_IspH - LmpH_to_NmpH - LmpH_to_ImpH + /* Infection and disease */
+                        (1-HIV_ART)*(NmnH_first_success + NmnH_second_success + NmpH_first_success + NmpH_second_success + ImnH_first_success + ImnH_second_success + ImpH_first_success + ImpH_second_success) + /* Rx */ 
+                        forc[iz+82]*H_CD4[j][i]*Lmp[i] - H_prog[j+1][i]*Lmp_H[i][j] + H_prog[j][i]*Lmp_H[i][j-1] - /* HIV incidence and progression */
+                        up_H_mort[j][i]*Lmp_H[i][j] - ART_prop[i][j]*Lmp_H[i][j] + (Lmp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + r_H*(Imp_H[i][j]+Nmp_H[i][j]) - /* HIV death, ART inititation, migration, self-cure */
+                        false_pos*Lmp_H[i][j]*HIV_ART; /* Link to ART for false positive TB cases */
+
+          dNsn_H[i][j] = - m_b[i]*Nsn_H[i][j] + /* Death */
+                        SH_to_NsnH + LsnH_to_NsnH + LmnH_to_NsnH + PTnH_to_NsnH - /* Disease */
+                        NsnH_pos + NsnH_lost + /* Diagnosis, pre Rx lost */
+                        forc[iz+82]*H_CD4[j][i]*Nsn[i] - H_prog[j+1][i]*Nsn_H[i][j] + H_prog[j][i]*Nsn_H[i][j-1] - /* HIV incidence and progression */ 
+                        up_H_mort[j][i]*Nsn_H[i][j] - ART_prop[i][j]*Nsn_H[i][j] + (Nsn_H[i][j]/tot_age[i])*(forc[iz+116]/5) - (theta_H + r_H + muN_H)*Nsn_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */
+
+          dNsp_H[i][j] = - m_b[i]*Nsp_H[i][j] + /* Death */
+                        LspH_to_NspH + LmpH_to_NspH + PTpH_to_NspH - /* Disease */
+                        NspH_pos + NspH_lost + (1-HIV_ART)*(NsnH_first_fail + NsnH_second_fail + NspH_first_fail + NspH_second_fail) + /* Diagnosis, pre Rx lost, failed Rx */                     
+                        forc[iz+82]*H_CD4[j][i]*Nsp[i] - H_prog[j+1][i]*Nsp_H[i][j] + H_prog[j][i]*Nsp_H[i][j-1] - /* HIV incidence and progression */
+                        up_H_mort[j][i]*Nsp_H[i][j] - ART_prop[i][j]*Nsp_H[i][j] + (Nsp_H[i][j]/tot_age[i])*(forc[iz+116]/5) -  (theta_H + r_H + muN_H)*Nsp_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */
+    
+          dNmn_H[i][j] = - m_b[i]*Nmn_H[i][j] + /* Death */
+                        SH_to_NmnH + LsnH_to_NmnH + LmnH_to_NmnH + PTnH_to_NmnH - /* Disease */
+                        NmnH_pos + NmnH_lost + /* Diagnosis, pre Rx lost */
+                        forc[iz+82]*H_CD4[j][i]*Nmn[i] - H_prog[j+1][i]*Nmn_H[i][j] + H_prog[j][i]*Nmn_H[i][j-1] - /* HIV incidence and progression */
+                        up_H_mort[j][i]*Nmn_H[i][j] - ART_prop[i][j]*Nmn_H[i][j] + (Nmn_H[i][j]/tot_age[i])*(forc[iz+116]/5) - (theta_H + r_H + muN_H)*Nmn_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */
+
+          dNmp_H[i][j] = - m_b[i]*Nmp_H[i][j] + /* Death */
+                        LspH_to_NmpH + LmpH_to_NmpH + PTpH_to_NmpH - /* Disease */
+                        NmpH_pos + NmpH_lost + (1-HIV_ART)*(NmnH_first_fail + NmnH_second_fail + NmpH_first_fail + NmpH_second_fail + NsnH_res + NspH_res) + /* Diagnosis, pre Rx lost, failed Rx, acquired resistance */                      
+                        forc[iz+82]*H_CD4[j][i]*Nmp[i] - H_prog[j+1][i]*Nmp_H[i][j] + H_prog[j][i]*Nmp_H[i][j-1] - /* HIV incidence and progression */ 
+                        up_H_mort[j][i]*Nmp_H[i][j] - ART_prop[i][j]*Nmp_H[i][j] + (Nmp_H[i][j]/tot_age[i])*(forc[iz+116]/5) - (theta_H + r_H + muN_H)*Nmp_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */
+
+          dIsn_H[i][j] = - m_b[i]*Isn_H[i][j] + /* Death */
+                        SH_to_IsnH + LsnH_to_IsnH + LmnH_to_IsnH + PTnH_to_IsnH - /* Disease */
+                        IsnH_pos + IsnH_lost + /* Diagnosis, pre Rx lost */
+                        forc[iz+82]*H_CD4[j][i]*Isn[i] - H_prog[j+1][i]*Isn_H[i][j] + H_prog[j][i]*Isn_H[i][j-1] - /* HIV incidence and progression */ 
+                        up_H_mort[j][i]*Isn_H[i][j] - ART_prop[i][j]*Isn_H[i][j] + (Isn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nsn_H[i][j] - (r_H + muI_H)*Isn_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */
+
+          dIsp_H[i][j] = - m_b[i]*Isp_H[i][j] + /* Death */
+                        LspH_to_IspH + LmpH_to_IspH + PTpH_to_IspH - /* Disease */  
+                        IspH_pos + IspH_lost + (1-HIV_ART)*(IsnH_first_fail + IsnH_second_fail + IspH_first_fail + IspH_second_fail) + /* Diagnosis, pre Rx lost, failed Rx */
+                        forc[iz+82]*H_CD4[j][i]*Isp[i] - H_prog[j+1][i]*Isp_H[i][j] + H_prog[j][i]*Isp_H[i][j-1] - /* HIV incidence and progression */ 
+                        up_H_mort[j][i]*Isp_H[i][j] - ART_prop[i][j]*Isp_H[i][j] + (Isp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nsp_H[i][j] - (r_H + muI_H)*Isp_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */       
+
+          dImn_H[i][j] = - m_b[i]*Imn_H[i][j] + /* Death */
+                        SH_to_ImnH + LsnH_to_ImnH + LmnH_to_ImnH + PTnH_to_ImnH - /* Disease */
+                        ImnH_pos + ImnH_lost + /* Diagnosis, pre Rx lost */
+                        forc[iz+82]*H_CD4[j][i]*Imn[i] - H_prog[j+1][i]*Imn_H[i][j] + H_prog[j][i]*Imn_H[i][j-1] - /* HIV incidence and progression */
+                        up_H_mort[j][i]*Imn_H[i][j] - ART_prop[i][j]*Imn_H[i][j] + (Imn_H[i][j]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nmn_H[i][j] - (r_H + muI_H)*Imn_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */
+
+          dImp_H[i][j] = - m_b[i]*Imp_H[i][j] + /* Death */
+                        LspH_to_ImpH + LmpH_to_ImpH + PTpH_to_ImpH - /* Disease */
+                        ImpH_pos + ImpH_lost + (1-HIV_ART)*(ImnH_first_fail + ImnH_second_fail + ImpH_first_fail + ImpH_second_fail + IsnH_res + IspH_res) + /* Diagnosis, pre Rx lost, failed Rx, acquired resistance */  
+                        forc[iz+82]*H_CD4[j][i]*Imp[i] - H_prog[j+1][i]*Imp_H[i][j] + H_prog[j][i]*Imp_H[i][j-1] - /* HIV incidence and progression */
+                        up_H_mort[j][i]*Imp_H[i][j] - ART_prop[i][j]*Imp_H[i][j] + (Imp_H[i][j]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nmp_H[i][j] - (r_H + muI_H)*Imp_H[i][j]; /* HIV death, ART inititation, migration, sm conversion, self-cure, TB death */                        
                    
+          dPTn_H[i][j] = -m_b[i]*PTn_H[i][j] - /* Death */
+                         PTnH_to_LsnH - PTnH_to_NsnH - PTnH_to_IsnH - PTnH_to_LmnH - PTnH_to_NmnH - PTnH_to_ImnH + /* Infection and disease */
+                         false_pos*(1-HIV_ART)*tpos_s*Lsn_H[i][j] - false_pos*PTn_H[i][j]*HIV_ART + /* Incorrect Rx for latent infected, linked to ART*/ 
+                         forc[iz+82]*H_CD4[j][i]*PTn[i] - H_prog[j+1][i]*PTn_H[i][j] + H_prog[j][i]*PTn_H[i][j-1] - /* HIV incidence and progression */ 
+                         up_H_mort[j][i]*PTn_H[i][j] - ART_prop[i][j]*PTn_H[i][j] + (PTn_H[i][j]/tot_age[i])*(forc[iz+116]/5); /* HIV death, ART inititation, migration */
+
+          dPTp_H[i][j] = - m_b[i]*PTp_H[i][j] - /* Death */
+                         PTpH_to_LspH - PTpH_to_NspH - PTpH_to_IspH - PTpH_to_LmpH - PTpH_to_NmpH - PTpH_to_ImpH + /* Infection and disease */
+                         false_pos*(1-HIV_ART)*tpos_s*Lsp_H[i][j] - false_pos*PTp_H[i][j]*HIV_ART + /* Incorrect Rx for latent infected, linked to ART*/
+                         forc[iz+82]*H_CD4[j][i]*PTp[i] - H_prog[j+1][i]*PTp_H[i][j] + H_prog[j][i]*PTp_H[i][j-1] - /* HIV incidence and progression */
+                         up_H_mort[j][i]*PTp_H[i][j] - ART_prop[i][j]*PTp_H[i][j] + (PTp_H[i][j]/tot_age[i])*(forc[iz+116]/5); /* HIV death, ART inititation, migration */
+                           
           TB_cases_pos_age[i][j] =(v_age_H[i][j]*(1-sig_H) + FS*a_age_H[i][j]*(1-p_H[j])*(1-sig_H))*Lsn_H[i][j] + FS*a_age_H[i][j]*(1-sig_H)*(S_H[i][j] + (1-p_H[j])*(Lmn_H[i][j] + PTn_H[i][j])) + 
                                   (v_age_H[i][j]*(1-sig_H) + FS*a_age_H[i][j]*(1-p_H[j])*(1-sig_H))*Lsp_H[i][j] + FS*a_age_H[i][j]*(1-sig_H)*(1-p_H[j])*(Lmp_H[i][j] + PTp_H[i][j]) +
                                   (v_age_H[i][j]*(1-sig_H) + FM*a_age_H[i][j]*(1-p_H[j])*(1-sig_H))*Lmn_H[i][j] + FM*a_age_H[i][j]*(1-sig_H)*(S_H[i][j] + (1-p_H[j])*(Lsn_H[i][j] + PTn_H[i][j])) +         
@@ -1150,7 +1368,39 @@ void derivs1(int *neq, double *t, double *y, double *ydot, double *yout, int *ip
           
           for (l=0; l<n_ART; l++){
         
-        
+              /* Calculate the disease flows here and use these in the derivatives - intention is to make the model more flexible/easier to understand */
+      
+            double SA_to_LsnA = FS*(1-a_age_A[i][j][l])*S_A[i][j][l];                                /* Susceptible to latent DS infection (no disease history) */
+            double SA_to_NsnA = FS*a_age_A[i][j][l]*(1-sig_H)*S_A[i][j][l];                          /* Susceptible to primary DS smear negative disease (no disease history) */
+            double SA_to_IsnA = FS*a_age_A[i][j][l]*sig_H*S_A[i][j][l];                              /* Susceptible to primary DS smear positive disease (no disease history) */
+            double SA_to_LmnA = FM*(1-a_age_A[i][j][l])*S_A[i][j][l];                                /* Susceptible to latent DR infection (no disease history) */
+            double SA_to_NmnA = FM*a_age_A[i][j][l]*(1-sig_H)*S_A[i][j][l];                          /* Susceptible to primary DR smear negative disease (no disease history) */
+            double SA_to_ImnA = FM*a_age_A[i][j][l]*sig_H*S_A[i][j][l];                              /* Susceptible to primary DR smear positive disease (no disease history) */
+      
+            double LsnA_to_NsnA = (v_age_A[i][j][l] + FS*a_age_A[i][j][l]*(1-p_A[j][l]))*(1-sig_H)*Lsn_A[i][j][l];   /* Latent DS to smear negative DS disease (no disease history) - reactivation and reinfection */ 
+            double LsnA_to_IsnA = (v_age_A[i][j][l] + FS*a_age_A[i][j][l]*(1-p_A[j][l]))*sig_H*Lsn_A[i][j][l];       /* Latent DS to smear positive DS disease (no disease history) - reactivation and reinfection */ 
+            double LsnA_to_NmnA = FM*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H)*Lsn_A[i][j][l];                        /* Latent DS to smear negative DR disease (no disease history) - co-infection */ 
+            double LsnA_to_ImnA = FM*a_age_A[i][j][l]*(1-p_A[j][l])*sig_H*Lsn_A[i][j][l];                            /* Latent DS to smear positive DR disease (no disease history) - co-infection */
+            double LsnA_to_LmnA = FM*(1-a_age_A[i][j][l])*(1-p_A[j][l])*g*Lsn_A[i][j][l];                            /* Latent DS to latent DR (no disease history) */
+      
+            double LmnA_to_NmnA = (v_age_A[i][j][l] + FM*a_age_A[i][j][l]*(1-p_A[j][l]))*(1-sig_H)*Lmn_A[i][j][l];   /* Latent DR to smear negative DR disease (no disease history) - reactivation and reinfection */ 
+            double LmnA_to_ImnA = (v_age_A[i][j][l] + FM*a_age_A[i][j][l]*(1-p_A[j][l]))*sig_H*Lmn_A[i][j][l];       /* Latent DR to smear positive DR disease (no disease history) - reactivation and reinfection */ 
+            double LmnA_to_NsnA = FS*a_age_A[i][j][l]*(1-sig_H)*(1-p_A[j][l])*Lmn_A[i][j][l];                        /* Latent DR to smear negative DS disease (no disease history) - co-infection */
+            double LmnA_to_IsnA = FS*a_age_A[i][j][l]*sig_H*(1-p_A[j][l])*Lmn_A[i][j][l];                            /* Latent DR to smear positive DS disease (no disease history) - co-infection */
+            double LmnA_to_LsnA = FS*(1-a_age_A[i][j][l])*(1-p_A[j][l])*(1-g)*Lmn_A[i][j][l];                        /* Latent DR to latent DS (no disease history) */
+
+            double LspA_to_NspA = (v_age_A[i][j][l] + FS*a_age_A[i][j][l]*(1-p_A[j][l]))*(1-sig_H)*Lsp_A[i][j][l];   /* Latent DS to smear negative DS disease (prior Rx) - reactivation and reinfection */ 
+            double LspA_to_IspA = (v_age_A[i][j][l] + FS*a_age_A[i][j][l]*(1-p_A[j][l]))*sig_H*Lsp_A[i][j][l];       /* Latent DS to smear positive DS disease (prior Rx) - reactivation and reinfection */     
+            double LspA_to_NmpA = FM*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H)*Lsp_A[i][j][l];                        /* Latent DS to smear negative DR disease (prior_rx) - reactivation and reinfection */ 
+            double LspA_to_ImpA = FM*a_age_A[i][j][l]*(1-p_A[j][l])*sig_H*Lsp_A[i][j][l];                            /* Latent DS to smear positive DR disease (prior_Rx) - reactivation and reinfection */
+            double LspA_to_LmpA = FM*(1-a_age_A[i][j][l])*(1-p_A[j][l])*g*Lsp_A[i][j][l];                            /* Latent DS to latent DR (prior Rx) */
+      
+            double LmpA_to_NmpA = (v_age_A[i][j][l] + FM*a_age_A[i][j][l]*(1-p_A[j][l]))*(1-sig_H)*Lmp_A[i][j][l];   /* Latent DR to smear negative DR disease (prior Rx) - reactivation and reinfection */ 
+            double LmpA_to_ImpA = (v_age_A[i][j][l] + FM*a_age_A[i][j][l]*(1-p_A[j][l]))*sig_H*Lmp_A[i][j][l];       /* Latent DR to smear positive DR disease (prior Rx) - reactivation and reinfection */     
+            double LmpA_to_NspA = FS*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H)*Lmp_A[i][j][l];                        /* Latent DR to smear negative DS disease (prior_rx) - reactivation and reinfection */ 
+            double LmpA_to_IspA = FS*a_age_A[i][j][l]*(1-p_A[j][l])*sig_H*Lmp_A[i][j][l];                            /* Latent DR to smear positive DS disease (prior_Rx) - reactivation and reinfection */
+            double LmpA_to_LspA = FS*(1-a_age_A[i][j][l])*(1-p_A[j][l])*(1-g)*Lmp_A[i][j][l];                        /* Latent DR to latent DS (prior Rx) */
+            
             double PTnA_to_LsnA = FS*(1-a_age_A[i][j][l])*(1-p_A[j][l])*PTn_A[i][j][l];            /* Post PT to latent DS (no disease history) */
             double PTnA_to_NsnA = FS*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H)*PTn_A[i][j][l];      /* Post PT to smear negative DS disease (no disease history) */
             double PTnA_to_IsnA = FS*a_age_A[i][j][l]*(1-p_A[j][l])*sig_H*PTn_A[i][j][l];          /* Post PT to smear positive DS disease (no disease history) */
@@ -1165,129 +1415,208 @@ void derivs1(int *neq, double *t, double *y, double *ydot, double *yout, int *ip
             double PTpA_to_NmpA = FM*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H)*PTp_A[i][j][l];      /* Post PT to smear negative DR disease (prior Rx) */
             double PTpA_to_ImpA = FM*a_age_A[i][j][l]*(1-p_A[j][l])*sig_H*PTp_A[i][j][l];          /* Post PT to smear positive DR disease (prior Rx) */
         
-            dS_A[i][j][l] = - m_b[i]*S_A[i][j][l] - (FS + FM)*S_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*S_H[i][j] + A_prog[l]*S_A[i][j][l-1] - A_prog[l+1]*S_A[i][j][l] - up_A_mort[l][j][i]*S_A[i][j][l] + 
-                            (S_A[i][j][l]/tot_age[i])*(forc[iz+116]/5);
+            /* Calculate "care" flows here and use these in the derivatives */
+            
+            /* sm-, drug sus, no Rx history */    
+            double NsnA_pos = kpos*se_N_pos*rel_d*Nsn_A[i][j][l];     /* TB positive - move all out of Nsn_A */
+            double NsnA_dst = NsnA_pos*dstpos_n;                      /* Get DST */
+            double NsnA_dst_fpos = NsnA_dst*(1-sp_m_pos);             /* False pos on DST */
+            double NsnA_first = l_s*(NsnA_pos - NsnA_dst_fpos);       /* Start first line Rx (correct) */     
+            double NsnA_second = l_m*(NsnA_dst_fpos);                 /* Start second line treatment (incorrect) */
+            double NsnA_lost = NsnA_pos - NsnA_first - NsnA_second;   /* Positive cases lost to follow up  - go to Nsn_A */ 
+            double NsnA_res = NsnA_first*e;                           /* Develop resistance - go to Nmp_A */
+            double NsnA_first_success = (NsnA_first-NsnA_res)*tART_s; /* First line success - go to Lsp_A */
+            double NsnA_first_fail = (NsnA_first-NsnA_res)*(1-tART_s);/* First line failure - go to Nsp_A */
+            double NsnA_second_success = NsnA_second*tART_m;          /* Second line success - go to Lsp_A */
+            double NsnA_second_fail = NsnA_second*(1-tART_m);         /* Second line failure - go to Nsp_A */
 
-            dLsn_A[i][j][l] = - m_b[i]*Lsn_A[i][j][l] +
-                            FS*((1-a_age_A[i][j][l])*S_A[i][j][l] + (1-a_age_A[i][j][l])*(1-p_A[j][l])*(1-g)*Lmn_A[i][j][l]) -
-                            (v_age_A[i][j][l] + FS*a_age_A[i][j][l]*(1-p_A[j][l]) + FM*a_age_A[i][j][l]*(1-p_A[j][l]) + FM*(1-a_age_A[i][j][l])*(1-p_A[j][l])*g)*Lsn_A[i][j][l] +
-                            r_H*(Isn_A[i][j][l] + Nsn_A[i][j][l]) +
-                            ART_prop[i][j]*A_start[l]*Lsn_H[i][j] + A_prog[l]*Lsn_A[i][j][l-1] - A_prog[l+1]*Lsn_A[i][j][l] - up_A_mort[l][j][i]*Lsn_A[i][j][l] +
-                            (Lsn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) -
-                            health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tART_s*Lsn_A[i][j][l] + PTnA_to_LsnA;
+            /* sm-, drug sus, previous Rx history */    
+            double NspA_pos = kpos*se_N_pos*rel_d*Nsp_A[i][j][l];     /* TB positive - move all out of Nsp_A */
+            double NspA_dst = NspA_pos*dstpos_p;                      /* Get DST */
+            double NspA_dst_fpos = NspA_dst*(1-sp_m_pos);             /* False pos on DST */
+            double NspA_first = l_s*(NspA_pos - NspA_dst_fpos);       /* Start first line Rx (correct) */     
+            double NspA_second = l_m*(NspA_dst_fpos);                 /* Start second line treatment (incorrect) */
+            double NspA_lost = NspA_pos - NspA_first - NspA_second;   /* Positive cases lost to follow up  - go to Nsp_A */ 
+            double NspA_res = NspA_first*e;                           /* Develop resistance - go to Nmp_A */
+            double NspA_first_success = (NspA_first-NspA_res)*tART_s; /* First line success - go to Lsp_A */
+            double NspA_first_fail = (NspA_first-NspA_res)*(1-tART_s);/* First line failure - go to Nsp_A */
+            double NspA_second_success = NspA_second*tART_m;          /* Second line success - go to Lsp_A */
+            double NspA_second_fail = NspA_second*(1-tART_m);         /* Second line failure - go to Nsp_A */
 
-            dLsp_A[i][j][l] = - m_b[i]*Lsp_A[i][j][l] +
-                            FS*(1-a_age_A[i][j][l])*(1-p_A[j][l])*(1-g)*Lmp_A[i][j][l] -
-                            (v_age_A[i][j][l] + FS*a_age_A[i][j][l]*(1-p_A[j][l]) + FM*a_age_A[i][j][l]*(1-p_A[j][l]) + FM*(1-a_age_A[i][j][l])*(1-p_A[j][l])*g)*Lsp_A[i][j][l] +
-                            r_H*(Isp_A[i][j][l]+Nsp_A[i][j][l]) +
-                            kpos*(l_s*(1-e)*tART_s*((dstpos_p*sp_m_pos)+(1-dstpos_p)) + l_m*tART_m*dstpos_p*(1-sp_m_pos))*(se_I_pos*Isp_A[i][j][l] + se_N_pos*rel_d*Nsp_A[i][j][l]) + 
-                            kpos*(l_s*(1-e)*tART_s*((dstpos_n*sp_m_pos)+(1-dstpos_n)) + l_m*tART_m*dstpos_n*(1-sp_m_pos))*(se_I_pos*Isn_A[i][j][l] + se_N_pos*rel_d*Nsn_A[i][j][l]) +
-                            ART_prop[i][j]*A_start[l]*Lsp_H[i][j] + A_prog[l]*Lsp_A[i][j][l-1] - A_prog[l+1]*Lsp_A[i][j][l] - up_A_mort[l][j][i]*Lsp_A[i][j][l] +
-                            (Lsp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) -
-                            health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tART_s*Lsp_A[i][j][l] + PTpA_to_LspA;
-                             
-            dLmn_A[i][j][l] = - m_b[i]*Lmn_A[i][j][l] +
-                            FM*((1-a_age_A[i][j][l])*S_A[i][j][l] + (1-a_age_A[i][j][l])*(1-p_A[j][l])*g*Lsn_A[i][j][l]) -
-                            (v_age_A[i][j][l] + FM*a_age_A[i][j][l]*(1-p_A[j][l]) + FS*a_age_A[i][j][l]*(1-p_A[j][l]) + FS*(1-a_age_A[i][j][l])*(1-p_A[j][l])*(1-g))*Lmn_A[i][j][l] +
-                            r_H*(Imn_A[i][j][l]+Nmn_A[i][j][l]) +
-                            ART_prop[i][j]*A_start[l]*Lmn_H[i][j] + A_prog[l]*Lmn_A[i][j][l-1] - A_prog[l+1]*Lmn_A[i][j][l] - up_A_mort[l][j][i]*Lmn_A[i][j][l] +
-                            (Lmn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTnA_to_LmnA;
-      
-            dLmp_A[i][j][l] = - m_b[i]*Lmp_A[i][j][l] + 
-                            FM*(1-a_age_A[i][j][l])*(1-p_A[j][l])*g*Lsp_A[i][j][l] -
-                            (v_age_A[i][j][l] + FM*a_age_A[i][j][l]*(1-p_A[j][l]) + FS*a_age_A[i][j][l]*(1-p_A[j][l]) + FS*(1-a_age_A[i][j][l])*(1-p_A[j][l])*(1-g))*Lmp_A[i][j][l] +
-                            r_H*(Imp_A[i][j][l]+Nmp_A[i][j][l]) +
-                            kpos*(dstpos_p*se_m_pos*l_m*tART_m + l_s*tART_s*eff_p*((1-dstpos_p)+dstpos_p*(1-se_m_pos)))*(se_I_pos*Imp_A[i][j][l] + se_N_pos*rel_d*Nmp_A[i][j][l]) +
-                            kpos*(dstpos_n*se_m_pos*l_m*tART_m + l_s*tART_s*eff_n*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*(se_I_pos*Imn_A[i][j][l] + se_N_pos*rel_d*Nmn_A[i][j][l]) + 
-                            ART_prop[i][j]*A_start[l]*Lmp_H[i][j] + A_prog[l]*Lmp_A[i][j][l-1] - A_prog[l+1]*Lmp_A[i][j][l] - up_A_mort[l][j][i]*Lmp_A[i][j][l] +
-                            (Lmp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTpA_to_LmpA;
+            /* sm+, drug sus, no Rx history */    
+            double IsnA_pos = kpos*se_I_pos*Isn_A[i][j][l];           /* TB positive - move all out of Isn_A */
+            double IsnA_dst = IsnA_pos*dstpos_n;                      /* Get DST */
+            double IsnA_dst_fpos = IsnA_dst*(1-sp_m_pos);             /* False pos on DST */
+            double IsnA_first = l_s*(IsnA_pos - IsnA_dst_fpos);       /* Start first line Rx (correct) */     
+            double IsnA_second = l_m*(IsnA_dst_fpos);                 /* Start second line treatment (incorrect) */
+            double IsnA_lost = IsnA_pos - IsnA_first - IsnA_second;   /* Positive cases lost to follow up  - go to Isn_A */ 
+            double IsnA_res = IsnA_first*e;                           /* Develop resistance - go to Imp_A */
+            double IsnA_first_success = (IsnA_first-IsnA_res)*tART_s; /* First line success - go to Lsp_A */
+            double IsnA_first_fail = (IsnA_first-IsnA_res)*(1-tART_s);/* First line failure - go to Isp_A */
+            double IsnA_second_success = IsnA_second*tART_m;          /* Second line success - go to Lsp_A */
+            double IsnA_second_fail = IsnA_second*(1-tART_m);         /* Second line failure - go to Isp_A */
 
-            dNsn_A[i][j][l] = - m_b[i]*Nsn_A[i][j][l]+
-                            (v_age_A[i][j][l]*(1-sig_H) + FS*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H))*Lsn_A[i][j][l] +
-                            FS*a_age_A[i][j][l]*(1-sig_H)*(S_A[i][j][l] + (1-p_A[j][l])*Lmn_A[i][j][l]) -
-                            (theta_H + r_H + muN_H_A[i][l])*Nsn_A[i][j][l] -
-                            kpos*se_N_pos*rel_d*(l_s*(dstpos_n*sp_m_pos + (1-dstpos_n)) + dstpos_n*(1-sp_m_pos)*l_m)*Nsn_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*Nsn_H[i][j] + A_prog[l]*Nsn_A[i][j][l-1] - A_prog[l+1]*Nsn_A[i][j][l] - up_A_mort[l][j][i]*Nsn_A[i][j][l] +
-                            (Nsn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTnA_to_NsnA;
-                                    
-            dNsp_A[i][j][l] = - m_b[i]*Nsp_A[i][j][l] + 
-                            (v_age_A[i][j][l]*(1-sig_H) + FS*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H))*Lsp_A[i][j][l] +
-                            FS*a_age_A[i][j][l]*(1-sig_H)*(1-p_A[j][l])*Lmp_A[i][j][l] -
-                            (theta_H + r_H + muN_H_A[i][l])*Nsp_A[i][j][l] -
-                            kpos*rel_d*se_N_pos*((1-e)*tART_s*l_s*(sp_m_pos*dstpos_p + (1-dstpos_p)) + dstpos_p*(1-sp_m_pos)*l_m*tART_m + l_s*e*(sp_m_pos*dstpos_p +(1-dstpos_p)))*Nsp_A[i][j][l] + 
-                            kpos*rel_d*se_N_pos*(l_s*(1-e)*(1-tART_s)*(dstpos_n*sp_m_pos + (1-dstpos_n)) + dstpos_n*(1-sp_m_pos)*(1-tART_m)*l_m)*Nsn_A[i][j][l] +       
-                            ART_prop[i][j]*A_start[l]*Nsp_H[i][j] + A_prog[l]*Nsp_A[i][j][l-1] - A_prog[l+1]*Nsp_A[i][j][l] - up_A_mort[l][j][i]*Nsp_A[i][j][l] +
-                            (Nsp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTpA_to_NspA;
-          
-            dNmn_A[i][j][l] = - m_b[i]*Nmn_A[i][j][l] +
-                            (v_age_A[i][j][l]*(1-sig_H) + FM*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H))*Lmn_A[i][j][l] +
-                            FM*a_age_A[i][j][l]*(1-sig_H)*(S_A[i][j][l] + (1-p_A[j][l])*Lsn_A[i][j][l]) -
-                            (theta_H + r_H + muN_H_A[i][l])*Nmn_A[i][j][l] -
-                            kpos*rel_d*se_N_pos*(l_m*dstpos_n*se_m_pos + l_s*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*Nmn_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*Nmn_H[i][j] + A_prog[l]*Nmn_A[i][j][l-1] - A_prog[l+1]*Nmn_A[i][j][l] - up_A_mort[l][j][i]*Nmn_A[i][j][l] +
-                            (Nmn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTnA_to_NmnA;
-          
-            dNmp_A[i][j][l] = - m_b[i]*Nmp_A[i][j][l] +
-                            (v_age_A[i][j][l]*(1-sig_H) + FM*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H))*Lmp_A[i][j][l] +
-                            FM*a_age_A[i][j][l]*(1-sig_H)*(1-p_A[j][l])*Lsp_A[i][j][l] -
-                            (theta_H + r_H + muN_H_A[i][l])*Nmp_A[i][j][l] -
-                            kpos*rel_d*se_N_pos*(dstpos_p*se_m_pos*l_m*tART_m + l_s*tART_s*eff_p*((1-dstpos_p)+dstpos_p*(1-se_m_pos)))*Nmp_A[i][j][l] + 
-                            kpos*l_s*rel_d*e*se_N_pos*((dstpos_n*sp_m_pos+(1-dstpos_n))*Nsn_A[i][j][l]+(dstpos_p*sp_m_pos+(1-dstpos_p))*Nsp_A[i][j][l]) + 
-                            kpos*se_N_pos*rel_d*(dstpos_n*l_m*se_m_pos*(1-tART_m) + l_s*(1-(tART_s*eff_n))*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*Nmn_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*Nmp_H[i][j] + A_prog[l]*Nmp_A[i][j][l-1] - A_prog[l+1]*Nmp_A[i][j][l] - up_A_mort[l][j][i]*Nmp_A[i][j][l] +
-                            (Nmp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTpA_to_NmpA;
+            /* sm+, drug sus, previous Rx history */    
+            double IspA_pos = kpos*se_I_pos*Isp_A[i][j][l];           /* TB positive - move all out of Isp_A */
+            double IspA_dst = IspA_pos*dstpos_p;                      /* Get DST */
+            double IspA_dst_fpos = IspA_dst*(1-sp_m_pos);             /* False pos on DST */
+            double IspA_first = l_s*(IspA_pos - IspA_dst_fpos);       /* Start first line Rx (correct) */     
+            double IspA_second = l_m*(IspA_dst_fpos);                 /* Start second line Rx (incorrect) */
+            double IspA_lost = IspA_pos - IspA_first - IspA_second;   /* Positive cases lost to follow up  - go to Isp_A */ 
+            double IspA_res = IspA_first*e;                           /* Develop resistance - go to Imp_A */
+            double IspA_first_success = (IspA_first-IspA_res)*tART_s; /* First line success - go to Lsp_A */
+            double IspA_first_fail = (IspA_first-IspA_res)*(1-tART_s);/* First line failure - go to Isp_A */
+            double IspA_second_success = IspA_second*tART_m;          /* Second line success - go to Lsp_A */
+            double IspA_second_fail = IspA_second*(1-tART_m);         /* Second line failure - go to Isp_A */
 
-            dIsn_A[i][j][l] = - m_b[i]*Isn_A[i][j][l] +
-                            (v_age_A[i][j][l]*sig_H + FS*a_age_A[i][j][l]*sig_H*(1-p_A[j][l]))*Lsn_A[i][j][l] +
-                            FS*a_age_A[i][j][l]*sig_H*S_A[i][j][l] +
-                            FS*a_age_A[i][j][l]*(1-p_A[j][l])*sig_H*Lmn_A[i][j][l] +
-                            theta_H*Nsn_A[i][j][l] -
-                            (r_H + muI_H_A[i][l])*Isn_A[i][j][l] -
-                            kpos*se_I_pos*((dstpos_n*sp_m_pos + (1-dstpos_n))*l_s +(dstpos_n*(1-sp_m_pos)*l_m))*Isn_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*Isn_H[i][j] + A_prog[l]*Isn_A[i][j][l-1] - A_prog[l+1]*Isn_A[i][j][l] - up_A_mort[l][j][i]*Isn_A[i][j][l] +
-                            (Isn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTnA_to_IsnA;
+            /* sm-, MDR, no Rx history */
+            double NmnA_pos = kpos*se_N_pos*rel_d*Nmn_A[i][j][l];     /* TB positive - move all out of Nmn_A */
+            double NmnA_dst = NmnA_pos*dstpos_n;                      /* Get DST */
+            double NmnA_dst_pos = NmnA_dst*se_m_pos;                  /* True pos on DST */
+            double NmnA_first = l_s*(NmnA_pos - NmnA_dst_pos);        /* Start first line Rx (incorrect) */  
+            double NmnA_second = l_m*NmnA_dst_pos;                    /* Start second line Rx (correct) */
+            double NmnA_lost = NmnA_pos - NmnA_first - NmnA_second;   /* Positive cases lost to follow up - go to Nmn_A */
+            double NmnA_first_success = NmnA_first*tART_s*eff_n;      /* First line success - go to Lmp_A */
+            double NmnA_first_fail = NmnA_first - NmnA_first_success; /* First line failure - go to Nmp_A */
+            double NmnA_second_success = NmnA_second*tART_m;          /* Second line success - go to Lmp_A */
+            double NmnA_second_fail = NmnA_second*(1-tART_m);         /* Second line failure - go to Nmp_A */
 
-            dIsp_A[i][j][l] = - m_b[i]*Isp_A[i][j][l] +
-                            (v_age_A[i][j][l]*sig_H + FS*a_age_A[i][j][l]*sig_H*(1-p_A[j][l]))*Lsp_A[i][j][l] +
-                            FS*a_age_A[i][j][l]*sig_H*(1-p_A[j][l])*Lmp_A[i][j][l] +
-                            theta_H*Nsp_A[i][j][l] +
-                            kpos*se_I_pos*(l_s*(1-e)*(1-tART_s)*(dstpos_n*sp_m_pos + (1-dstpos_n)) + (dstpos_n*(1-sp_m_pos)*l_m*(1-tART_m)))*Isn_A[i][j][l] - 
-                            (r_H + muI_H_A[i][l])*Isp_A[i][j][l] -
-                            kpos*se_I_pos*(l_s*(1-e)*tART_s*(sp_m_pos*dstpos_p + (1-dstpos_p)) + dstpos_p*(1-sp_m_pos)*l_m*tART_m + l_s*e*(sp_m_pos*dstpos_p + (1-dstpos_p)))*Isp_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*Isp_H[i][j] + A_prog[l]*Isp_A[i][j][l-1] - A_prog[l+1]*Isp_A[i][j][l] - up_A_mort[l][j][i]*Isp_A[i][j][l] +
-                            (Isp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTpA_to_IspA;
-                       
-            dImn_A[i][j][l] = - m_b[i]*Imn_A[i][j][l] +
-                            (v_age_A[i][j][l]*sig_H + FM*a_age_A[i][j][l]*sig_H*(1-p_A[j][l]))*Lmn_A[i][j][l] +
-                            FM*a_age_A[i][j][l]*sig_H*S_A[i][j][l] +
-                            FM*a_age_A[i][j][l]*(1-p_A[j][l])*sig_H*Lsn_A[i][j][l] +
-                            theta_H*Nmn_A[i][j][l] -
-                            kpos*se_I_pos*(l_m*dstpos_n*se_m_pos + (1-dstpos_n)*l_s + dstpos_n*(1-se_m_pos)*l_s)*Imn_A[i][j][l] -
-                            (r_H + muI_H_A[i][l])*Imn_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*Imn_H[i][j] + A_prog[l]*Imn_A[i][j][l-1] - A_prog[l+1]*Imn_A[i][j][l] - up_A_mort[l][j][i]*Imn_A[i][j][l] +
-                            (Imn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTnA_to_ImnA;
+            /* sm-, MDR, previous Rx history */
+            double NmpA_pos = kpos*se_N_pos*rel_d*Nmp_A[i][j][l];     /* TB positive - move all out of Nmp_A */
+            double NmpA_dst = NmpA_pos*dstpos_p;                      /* Get DST */
+            double NmpA_dst_pos = NmpA_dst*se_m_pos;                  /* True pos on DST */
+            double NmpA_first = l_s*(NmpA_pos - NmpA_dst_pos);        /* Start first line Rx (incorrect) */  
+            double NmpA_second = l_m*NmpA_dst_pos;                    /* Start second line Rx (correct) */
+            double NmpA_lost = NmpA_pos - NmpA_first - NmpA_second;   /* Positive cases lost to follow up - go to Nmp_A */
+            double NmpA_first_success = NmpA_first*tART_s*eff_p;      /* First line success - go to Lmp_A */
+            double NmpA_first_fail = NmpA_first - NmpA_first_success; /* First line failure - go to Nmp_A */
+            double NmpA_second_success = NmpA_second*tART_m;          /* Second line success - go to Lmp_A */
+            double NmpA_second_fail = NmpA_second*(1-tART_m);         /* Second line failure - go to Nmp_A */
 
-            dImp_A[i][j][l] = - m_b[i]*Imp_A[i][j][l] +
-                            (v_age_A[i][j][l]*sig_H + FM*a_age_A[i][j][l]*sig_H*(1-p_A[j][l]))*Lmp_A[i][j][l] +
-                            FM*a_age_A[i][j][l]*sig_H*(1-p_A[j][l])*Lsp_A[i][j][l] +
-                            theta_H*Nmp_A[i][j][l] +
-                            kpos*se_I_pos*(se_m_pos*l_m*dstpos_n*(1-tART_m) + l_s*(1-(tART_s*eff_n))*((1-dstpos_n)+dstpos_n*(1-se_m_pos)))*Imn_A[i][j][l] + 
-                            kpos*se_I_pos*l_s*e*((dstpos_n*sp_m_pos + (1-dstpos_n))*Isn_A[i][j][l]+(dstpos_p*sp_m_pos+ (1-dstpos_p))*Isp_A[i][j][l]) -
-                            (r_H + muI_H_A[i][l])*Imp_A[i][j][l] -                     
-                            kpos*se_I_pos*(l_m*dstpos_p*tART_m*se_m_pos + l_s*tART_s*eff_p*((1-dstpos_p)+dstpos_p*(1-se_m_pos)))*Imp_A[i][j][l] +
-                            ART_prop[i][j]*A_start[l]*Imp_H[i][j] + A_prog[l]*Imp_A[i][j][l-1] - A_prog[l+1]*Imp_A[i][j][l] - up_A_mort[l][j][i]*Imp_A[i][j][l] +
-                            (Imp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + PTpA_to_ImpA;             
+            /* sm+, MDR, no Rx history */
+            double ImnA_pos = kpos*se_I_pos*Imn_A[i][j][l];           /* TB positive - move all out of Imn_A */
+            double ImnA_dst = ImnA_pos*dstpos_n;                      /* Get DST */
+            double ImnA_dst_pos = ImnA_dst*se_m_pos;                  /* True pos on DST */
+            double ImnA_first = l_s*(ImnA_pos - ImnA_dst_pos);        /* Start first line Rx (incorrect) */  
+            double ImnA_second = l_m*ImnA_dst_pos;                    /* Start second line Rx (correct) */
+            double ImnA_lost = ImnA_pos - ImnA_first - ImnA_second;   /* Positive cases lost to follow up - go to Imn_A */
+            double ImnA_first_success = ImnA_first*tART_s*eff_n;      /* First line success - go to Lmp_A */
+            double ImnA_first_fail = ImnA_first - ImnA_first_success; /* First line failure - go to Imp_A */
+            double ImnA_second_success = ImnA_second*tART_m;          /* Second line success - go to Lmp_A */
+            double ImnA_second_fail = ImnA_second*(1-tART_m);         /* Second line failure - go to Imp_A */
 
-            dPTn_A[i][j][l] = -m_b[i]*PTn_A[i][j][j] - PTnA_to_LsnA - PTnA_to_NsnA - PTnA_to_IsnA - PTnA_to_LmnA - PTnA_to_NmnA - PTnA_to_ImnA +
-                              health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tART_s*Lsn_A[i][j][l] +
-                              ART_prop[i][j]*A_start[l]*PTn_H[i][j] + A_prog[l]*PTn_A[i][j][l-1] - A_prog[l+1]*PTn_A[i][j][l] - up_A_mort[l][j][i]*PTn_A[i][j][l] +
-                              (PTn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5);  
+            /* sm+, MDR, previous Rx history */
+            double ImpA_pos = kpos*se_I_pos*Imp_A[i][j][l];           /* TB positive - move all out of Imp_A */
+            double ImpA_dst = ImpA_pos*dstpos_p;                      /* Get DST */
+            double ImpA_dst_pos = ImpA_dst*se_m_pos;                  /* True pos on DST */
+            double ImpA_first = l_s*(ImpA_pos - ImpA_dst_pos);        /* Start first line Rx (incorrect) */  
+            double ImpA_second = l_m*ImpA_dst_pos;                    /* Start second line Rx (correct) */
+            double ImpA_lost = ImpA_pos - ImpA_first - ImpA_second;   /* Positive cases lost to follow up - go to Imp_A */
+            double ImpA_first_success = ImpA_first*tART_s*eff_p;      /* First line success - go to Lmp_A */
+            double ImpA_first_fail = ImpA_first - ImpA_first_success; /* First line failure - go to Imp_A */
+            double ImpA_second_success = ImpA_second*tART_m;          /* Second line success - go to Lmp_A */
+            double ImpA_second_fail = ImpA_second*(1-tART_m);         /* Second line failure - go to Imp_A */
+        
 
-            dPTp_A[i][j][l] = - m_b[i]*PTp_A[i][j][l] - PTpA_to_LspA - PTpA_to_NspA - PTpA_to_IspA - PTpA_to_LmpA - PTpA_to_NmpA - PTpA_to_ImpA +
-                              health*kpos*(1-sp_I_pos*sp_N_pos)*l_s*tART_s*Lsp_A[i][j][l] +   
-                              ART_prop[i][j]*A_start[l]*PTp_H[i][j] + A_prog[l]*PTp_A[i][j][l-1] - A_prog[l+1]*PTp_A[i][j][l] - up_A_mort[l][j][i]*PTp_A[i][j][l] +
-                              (PTp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5);  
+        
+        
+            dS_A[i][j][l] = - m_b[i]*S_A[i][j][l] - /* Death */
+                            (FS + FM)*S_A[i][j][l] + /* Infection */
+                            ART_prop[i][j]*A_start[l]*S_H[i][j] + A_prog[l]*S_A[i][j][l-1] - A_prog[l+1]*S_A[i][j][l] -  /* ART initation and progression */
+                            up_A_mort[l][j][i]*S_A[i][j][l] + (S_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + /* ART death and migration */
+                            false_pos*S_H[i][j]*HIV_ART*A_start[l]; /* Link to ART for false positive TB cases */
+
+            dLsn_A[i][j][l] = - m_b[i]*Lsn_A[i][j][l] + /* Death */
+                            SA_to_LsnA + LmnA_to_LsnA + PTnA_to_LsnA - LsnA_to_LmnA - LsnA_to_NsnA - LsnA_to_IsnA - LsnA_to_NmnA - LsnA_to_ImnA + /* Infection and disease */ 
+                            ART_prop[i][j]*A_start[l]*Lsn_H[i][j] + A_prog[l]*Lsn_A[i][j][l-1] - A_prog[l+1]*Lsn_A[i][j][l] - /* ART initation and progression */
+                            up_A_mort[l][j][i]*Lsn_A[i][j][l] + (Lsn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + r_H*(Isn_A[i][j][l] + Nsn_A[i][j][l]) - /* ART death and migration, self-cure */
+                            false_pos*tART_s*Lsn_A[i][j][l] + false_pos*Lsn_H[i][j]*HIV_ART*A_start[l]*(1-tpos_s); /* False positive, Rx and ART */ 
+
+            dLsp_A[i][j][l] = - m_b[i]*Lsp_A[i][j][l] + /* Death */
+                            LmpA_to_LspA + PTpA_to_LspA - LspA_to_LmpA - LspA_to_NspA - LspA_to_IspA - LspA_to_NmpA - LspA_to_ImpA + /* Infection and disease */                            
+                            HIV_ART*A_start[l]*(NsnH_first_success + NsnH_second_success + NspH_first_success + NspH_second_success + IsnH_first_success + IsnH_second_success + IspH_first_success + IspH_second_success) + /* Rx and linked to ART */
+                            NsnA_first_success + NsnA_second_success + NspA_first_success + NspA_second_success + IsnA_first_success + IsnA_second_success + IspA_first_success + IspA_second_success + /* Rx */
+                            ART_prop[i][j]*A_start[l]*Lsp_H[i][j] + A_prog[l]*Lsp_A[i][j][l-1] - A_prog[l+1]*Lsp_A[i][j][l] - /* ART initation and progression */ 
+                            up_A_mort[l][j][i]*Lsp_A[i][j][l] + (Lsp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + r_H*(Isp_A[i][j][l]+Nsp_A[i][j][l]) - /* ART death and migration, self-cure */
+                            false_pos*tART_s*Lsp_A[i][j][l] + false_pos*Lsp_H[i][j]*HIV_ART*A_start[l]*(1-tpos_s); /* False positive, Rx and ART */ 
+
+            dLmn_A[i][j][l] = - m_b[i]*Lmn_A[i][j][l] + /* Deaths */ 
+                            SA_to_LmnA + LsnA_to_LmnA + PTnA_to_LmnA - LmnA_to_LsnA - LmnA_to_NsnA - LmnA_to_IsnA - LmnA_to_NmnA - LmnA_to_ImnA + /* Infection and disease */ 
+                            ART_prop[i][j]*A_start[l]*Lmn_H[i][j] + A_prog[l]*Lmn_A[i][j][l-1] - A_prog[l+1]*Lmn_A[i][j][l] - /* ART initation and progression */  
+                            up_A_mort[l][j][i]*Lmn_A[i][j][l] + (Lmn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + r_H*(Imn_A[i][j][l]+Nmn_A[i][j][l]) + /* ART death and migration, self-cure */
+                            false_pos*Lmn_H[i][j]*HIV_ART*A_start[l]; /* Link to ART for false positive TB cases */
+
+            dLmp_A[i][j][l] = - m_b[i]*Lmp_A[i][j][l] + /* Deaths */
+                            LspA_to_LmpA + PTpA_to_LmpA - LmpA_to_LspA - LmpA_to_NspA - LmpA_to_IspA - LmpA_to_NmpA - LmpA_to_ImpA + /* Infection and disease */
+                            HIV_ART*A_start[l]*(NmnH_first_success + NmnH_second_success + NmpH_first_success + NmpH_second_success + ImnH_first_success + ImnH_second_success + ImpH_first_success + ImpH_second_success) + /* Rx and linked to ART */
+                            NmnA_first_success + NmnA_second_success + NmpA_first_success + NmpA_second_success + ImnA_first_success + ImnA_second_success + ImpA_first_success + ImpA_second_success + /* Rx */
+                            ART_prop[i][j]*A_start[l]*Lmp_H[i][j] + A_prog[l]*Lmp_A[i][j][l-1] - A_prog[l+1]*Lmp_A[i][j][l] - /* ART initation and progression */  
+                            up_A_mort[l][j][i]*Lmp_A[i][j][l] + (Lmp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + r_H*(Imp_A[i][j][l]+Nmp_A[i][j][l]) + /* ART death and migration, self-cure */
+                            false_pos*Lmp_H[i][j]*HIV_ART*A_start[l]; /* Link to ART for false positive TB cases */
+
+            dNsn_A[i][j][l] = - m_b[i]*Nsn_A[i][j][l] + /* Births */ 
+                            SA_to_NsnA + LsnA_to_NsnA + LmnA_to_NsnA + PTnA_to_NsnA - /* Disease */
+                            NsnA_pos + NsnA_lost + /* Diagnosis, pre Rx lost */
+                            ART_prop[i][j]*A_start[l]*Nsn_H[i][j] + A_prog[l]*Nsn_A[i][j][l-1] - A_prog[l+1]*Nsn_A[i][j][l] - /* ART initation and progression */ 
+                            up_A_mort[l][j][i]*Nsn_A[i][j][l] + (Nsn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) - (theta_H + r_H + muN_H_A[i][l])*Nsn_A[i][j][l]; /* ART death and migration, sm conversion, self-cure, TB death */
+
+            dNsp_A[i][j][l] = - m_b[i]*Nsp_A[i][j][l] + /* Deaths */ 
+                            LspA_to_NspA + LmpA_to_NspA + PTpA_to_NspA - /* Disease */
+                            NspA_pos + NspA_lost + NsnA_first_fail + NsnA_second_fail + NspA_first_fail + NspA_second_fail + /* Diagnosis, pre Rx lost, failed Rx */ 
+                            HIV_ART*A_start[l]*(NsnH_first_fail + NsnH_second_fail + NspH_first_fail + NspH_second_fail) + /* ART inititation for Rx fail */
+                            ART_prop[i][j]*A_start[l]*Nsp_H[i][j] + A_prog[l]*Nsp_A[i][j][l-1] - A_prog[l+1]*Nsp_A[i][j][l] - /* ART initation and progression */
+                            up_A_mort[l][j][i]*Nsp_A[i][j][l] + (Nsp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) - (theta_H + r_H + muN_H_A[i][l])*Nsp_A[i][j][l]; /* ART death and migration, sm conversion, self-cure, TB death */
+
+            dNmn_A[i][j][l] = - m_b[i]*Nmn_A[i][j][l] + /* Deaths */
+                            SA_to_NmnA + LsnA_to_NmnA + LmnA_to_NmnA + PTnA_to_NmnA - /* Disease */
+                            NmnA_pos + NmnA_lost + /* Diagnosis, pre Rx lost */
+                            ART_prop[i][j]*A_start[l]*Nmn_H[i][j] + A_prog[l]*Nmn_A[i][j][l-1] - A_prog[l+1]*Nmn_A[i][j][l] - /* ART initation and progression */
+                            up_A_mort[l][j][i]*Nmn_A[i][j][l] + (Nmn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) - (theta_H + r_H + muN_H_A[i][l])*Nmn_A[i][j][l]; /* ART death and migration, sm conversion, self-cure, TB death */
+
+            dNmp_A[i][j][l] = - m_b[i]*Nmp_A[i][j][l] + /* Deaths */
+                            LspA_to_NmpA + LmpA_to_NmpA + PTpA_to_NmpA - /* Disease */
+                            NmpA_pos + NmpA_lost + NmnA_first_fail + NmnA_second_fail + NmpA_first_fail + NmpA_second_fail + NsnA_res + NspA_res + /* Diagnosis, pre Rx lost, failed Rx, acquired resistance */
+                            HIV_ART*A_start[l]*(NmnH_first_fail + NmnH_second_fail + NmpH_first_fail + NmpH_second_fail + NsnH_res + NspH_res) + /* ART initation for Rx fail */     
+                            ART_prop[i][j]*A_start[l]*Nmp_H[i][j] + A_prog[l]*Nmp_A[i][j][l-1] - A_prog[l+1]*Nmp_A[i][j][l] - /* ART initation and progression */ 
+                            up_A_mort[l][j][i]*Nmp_A[i][j][l] + (Nmp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) - (theta_H + r_H + muN_H_A[i][l])*Nmp_A[i][j][l]; /* ART death and migration, sm conversion, self-cure, TB death */
+
+            dIsn_A[i][j][l] = - m_b[i]*Isn_A[i][j][l] + /* Deaths */
+                            SA_to_IsnA + LsnA_to_IsnA + LmnA_to_IsnA + PTnA_to_IsnA - /* Disease */
+                            IsnA_pos + IsnA_lost + /* Diagnosis, pre Rx lost */
+                            ART_prop[i][j]*A_start[l]*Isn_H[i][j] + A_prog[l]*Isn_A[i][j][l-1] - A_prog[l+1]*Isn_A[i][j][l] - /* ART initation and progression */  
+                            up_A_mort[l][j][i]*Isn_A[i][j][l] + (Isn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nsn_A[i][j][l] - (r_H + muI_H_A[i][l])*Isn_A[i][j][l]; /* ART death and migration, sm conversion, self-cure, TB death */
+
+            dIsp_A[i][j][l] = - m_b[i]*Isp_A[i][j][l] + /* Deaths */
+                            LspA_to_IspA + LmpA_to_IspA + PTpA_to_IspA - /* Disease */
+                            IspA_pos + IspA_lost + IsnA_first_fail + IsnA_second_fail + IspA_first_fail + IspA_second_fail + /* Diagnosis, pre Rx lost, failed Rx */
+                            HIV_ART*A_start[l]*(IsnH_first_fail + IsnH_second_fail + IspH_first_fail + IspH_second_fail) + /* ART initation for Rx fail */
+                            ART_prop[i][j]*A_start[l]*Isp_H[i][j] + A_prog[l]*Isp_A[i][j][l-1] - A_prog[l+1]*Isp_A[i][j][l] - /* ART initation and progression */ 
+                            up_A_mort[l][j][i]*Isp_A[i][j][l] + (Isp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nsp_A[i][j][l] - (r_H + muI_H_A[i][l])*Isp_A[i][j][l]; /* ART death and migration, sm conversion, self-cure, TB death */
+
+            dImn_A[i][j][l] = - m_b[i]*Imn_A[i][j][l] + /* Deaths */
+                            SA_to_ImnA + LsnA_to_ImnA + LmnA_to_ImnA + PTnA_to_ImnA - /* Disease */
+                            ImnA_pos + ImnA_lost + /* Diagnosis, pre Rx lost */
+                            ART_prop[i][j]*A_start[l]*Imn_H[i][j] + A_prog[l]*Imn_A[i][j][l-1] - A_prog[l+1]*Imn_A[i][j][l] - /* ART initation and progression */ 
+                            up_A_mort[l][j][i]*Imn_A[i][j][l] + (Imn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nmn_A[i][j][l] - (r_H + muI_H_A[i][l])*Imn_A[i][j][l]; /* ART death and migration,  sm conversion, self-cure, TB death */
+
+            dImp_A[i][j][l] = - m_b[i]*Imp_A[i][j][l] + /* Deaths */
+                            LspA_to_ImpA + LmpA_to_ImpA + PTpA_to_ImpA - /* Disease */
+                            ImpA_pos + ImpA_lost + ImnA_first_fail + ImnA_second_fail + ImpA_first_fail + ImpA_second_fail + IsnA_res + IspA_res + /* Diagnosis, pre Rx lost, failed Rx, acquired resistance */
+                            HIV_ART*A_start[l]*(ImnH_first_fail + ImnH_second_fail + ImpH_first_fail + ImpH_second_fail + IsnH_res + IspH_res) + /* ART initation for Rx fail */     
+                            ART_prop[i][j]*A_start[l]*Imp_H[i][j] + A_prog[l]*Imp_A[i][j][l-1] - A_prog[l+1]*Imp_A[i][j][l] - /* ART initation and progression */ 
+                            up_A_mort[l][j][i]*Imp_A[i][j][l] + (Imp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5) + theta_H*Nmp_A[i][j][l] - (r_H + muI_H_A[i][l])*Imp_A[i][j][l]; /* ART death and migration, sm conversion, self-cure, TB death */           
+
+            dPTn_A[i][j][l] = -m_b[i]*PTn_A[i][j][j] - /* Deaths */
+                            PTnA_to_LsnA - PTnA_to_NsnA - PTnA_to_IsnA - PTnA_to_LmnA - PTnA_to_NmnA - PTnA_to_ImnA + /* Infection and disease */
+                            false_pos*Lsn_A[i][j][l]*tART_s + false_pos*HIV_ART*A_start[l]*tpos_s*Lsn_H[i][j] + false_pos*PTn_H[i][j]*HIV_ART*A_start[l] + /* Incorrect Rx for latent infected, linked to ART*/ 
+                            ART_prop[i][j]*A_start[l]*PTn_H[i][j] + A_prog[l]*PTn_A[i][j][l-1] - A_prog[l+1]*PTn_A[i][j][l] - /* ART initation and progression */ 
+                            up_A_mort[l][j][i]*PTn_A[i][j][l] + (PTn_A[i][j][l]/tot_age[i])*(forc[iz+116]/5); /* ART death and migration */
+
+            dPTp_A[i][j][l] = - m_b[i]*PTp_A[i][j][l] - /* Deaths */
+                            PTpA_to_LspA - PTpA_to_NspA - PTpA_to_IspA - PTpA_to_LmpA - PTpA_to_NmpA - PTpA_to_ImpA + /* Infection and disease */
+                            false_pos*Lsp_A[i][j][l]*tART_s + false_pos*HIV_ART*A_start[l]*tpos_s*Lsp_H[i][j] + false_pos*PTp_H[i][j]*HIV_ART*A_start[l] + /* Incorrect Rx for latent infected, linked to ART*/   
+                            ART_prop[i][j]*A_start[l]*PTp_H[i][j] + A_prog[l]*PTp_A[i][j][l-1] - A_prog[l+1]*PTp_A[i][j][l] - /* ART initation and progression */
+                            up_A_mort[l][j][i]*PTp_A[i][j][l] + (PTp_A[i][j][l]/tot_age[i])*(forc[iz+116]/5); /* ART death and migration */  
         
             TB_cases_ART_age[i][j][l] = (v_age_A[i][j][l]*(1-sig_H) + FS*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H))*Lsn_A[i][j][l] + FS*a_age_A[i][j][l]*(1-sig_H)*(S_A[i][j][l] + (1-p_A[j][l])*(Lmn_A[i][j][l] + PTn_A[i][j][l])) +
                                       (v_age_A[i][j][l]*(1-sig_H) + FS*a_age_A[i][j][l]*(1-p_A[j][l])*(1-sig_H))*Lsp_A[i][j][l] + FS*a_age_A[i][j][l]*(1-sig_H)*(1-p_A[j][l])*(Lmp_A[i][j][l] + PTp_A[i][j][l]) +
